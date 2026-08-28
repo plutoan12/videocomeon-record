@@ -31,6 +31,7 @@
     camStream: null,
     voices: [],        // [{startOut, blob, url, el, duration}] on the OUTPUT timeline
     voiceRec: null,    // active narration recording
+    voiceWarned: false, // desync warning shown once per session
     texts: [],         // [{text, x, y, size, color}] x/y top-left fractions, size = % of width
     wm: null,          // {file, url, img, x, y, w, aspect}
     textStyle: { color: '#ffffff', size: 6 },
@@ -67,6 +68,14 @@
       else break;
     }
     return out / E.speed;
+  }
+
+  /* narration clips are anchored to the output timeline at record time, so
+     cut/speed changes made afterwards shift them — tell the user once */
+  function warnVoiceDesync() {
+    if (!E.voices.length || E.voiceWarned) return;
+    E.voiceWarned = true;
+    window.App.toast('나레이션이 있는 상태에서 컷·속도를 바꾸면 나레이션 위치가 어긋날 수 있습니다.', 3600);
   }
 
   function segmentAt(t) {
@@ -153,6 +162,7 @@
     E.sel = 0;
     E.speed = 1; E.volume = 1; E.bgmVolume = 0.6; E.voiceVolume = 1; E.rotate = 0;
     E.playing = false;
+    E.voiceWarned = false;
 
     const v = document.createElement('video');
     v.playsInline = true;
@@ -715,6 +725,7 @@
       handle.setPointerCapture(e.pointerId);
       pause();
       pushUndo();
+      warnVoiceDesync();
       const move = (ev) => {
         const seg = E.segments[E.sel];
         if (!seg) return;
@@ -753,6 +764,7 @@
       return;
     }
     pushUndo();
+    warnVoiceDesync();
     E.segments.splice(i, 1, { start: seg.start, end: t }, { start: t, end: seg.end });
     E.sel = i + 1;
     renderTimeline();
@@ -764,6 +776,7 @@
       return;
     }
     pushUndo();
+    warnVoiceDesync();
     E.segments.splice(E.sel, 1);
     E.sel = Math.min(E.sel, E.segments.length - 1);
     E.video.currentTime = E.segments[E.sel].start;
@@ -1182,6 +1195,7 @@
       const chip = e.target.closest('.chip');
       if (!chip) return;
       pushUndo();
+      warnVoiceDesync();
       E.speed = parseFloat(chip.dataset.speed);
       if (E.video) E.video.playbackRate = E.speed;
       document.querySelectorAll('#speed-chips .chip').forEach((c) => c.classList.toggle('active', c === chip));
