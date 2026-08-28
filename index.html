@@ -86,6 +86,9 @@
       <button id="edit-undo" class="icon-btn light" aria-label="Undo" title="Undo" disabled>
         <svg viewBox="0 0 24 24"><path d="M12.5 8c-2.6 0-5 1-6.9 2.6L2 7v9h9l-3.6-3.6A8 8 0 0 1 20 16l2.4-.8A10.5 10.5 0 0 0 12.5 8z"/></svg>
       </button>
+      <button id="edit-redo" class="icon-btn light" aria-label="Redo" title="Redo" disabled>
+        <svg viewBox="0 0 24 24"><path d="M11.5 8c2.6 0 5 1 6.9 2.6L22 7v9h-9l3.6-3.6A8 8 0 0 0 4 16l-2.4-.8A10.5 10.5 0 0 1 11.5 8z"/></svg>
+      </button>
       <button id="edit-export" class="icon-btn light" aria-label="Export" title="Export">
         <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-1 5l5 5-5 5-1.4-1.4 2.6-2.6H7v-2h5.2L9.6 8.4z"/></svg>
       </button>
@@ -123,6 +126,9 @@
     <button class="tool" id="tool-speed"><svg viewBox="0 0 24 24"><path d="M12 4a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.2 4.5l1.7-1A7 7 0 1 1 19 13a6.9 6.9 0 0 1-.9 3.4l1.7 1A8.9 8.9 0 0 0 21 13a9 9 0 0 0-9-9zm3.5 4.1l-4.2 3.4a1.8 1.8 0 1 0 1.2 1.6l3.4-4.6z"/></svg><span>Speed</span></button>
     <button class="tool" id="tool-volume"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg><span>Volume</span></button>
     <button class="tool" id="tool-rotate"><svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg><span>Rotate</span></button>
+    <button class="tool" id="tool-filter"><svg viewBox="0 0 24 24"><path d="M3 6h18v2.5h-7v2h-4v-2H3zM3 15.5h7v-2h4v2h7V18H3z" opacity="0"/><path d="M4 7h16v2h-5.5v2h-5V9H4zm0 8h5.5v-2h5v2H20v2H4z"/><circle cx="12" cy="8" r="2.2"/><circle cx="12" cy="16" r="2.2"/></svg><span>Filter</span></button>
+    <button class="tool" id="tool-fade"><svg viewBox="0 0 24 24"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v12h4V6zm7 0v12h3V6h-3zm6 0v12h1V6z"/></svg><span>Fade</span></button>
+    <button class="tool" id="tool-capture"><svg viewBox="0 0 24 24"><path d="M9 4l-1.8 2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9zm3 4.5A4.5 4.5 0 1 1 7.5 13 4.5 4.5 0 0 1 12 8.5zm0 2A2.5 2.5 0 1 0 14.5 13 2.5 2.5 0 0 0 12 10.5z"/></svg><span>Capture</span></button>
   </div>
 
   <div class="edit-times"><span id="edit-t-cur">0:00.0</span><span id="edit-t-total">Total 0:00.0</span><span id="edit-t-end">0:00.0</span></div>
@@ -181,11 +187,52 @@
         <button class="color-chip" data-color="#4dd0ff" style="background:#4dd0ff"></button>
       </div>
       <label class="slider-row"><span class="slider-label">Size</span><input type="range" id="text-size" min="3" max="15" value="6"><span id="text-size-val" class="slider-val">6%</span></label>
+      <div class="emoji-row" id="emoji-row">
+        <button class="emoji-chip">😀</button>
+        <button class="emoji-chip">😂</button>
+        <button class="emoji-chip">❤️</button>
+        <button class="emoji-chip">🔥</button>
+        <button class="emoji-chip">👍</button>
+        <button class="emoji-chip">🎉</button>
+        <button class="emoji-chip">⭐</button>
+        <button class="emoji-chip">😱</button>
+      </div>
       <div class="text-actions">
         <button id="btn-text-add" class="btn-pink small">Add text</button>
         <button id="btn-wm-pick" class="btn-ghost small">Image watermark</button>
         <button id="btn-wm-remove" class="btn-ghost small hidden">Remove image</button>
         <input type="file" id="wm-file" accept="image/*" class="hidden">
+      </div>
+    </div>
+  </div>
+  <div id="sheet-filter" class="sheet hidden">
+    <div class="sheet-title">Filter</div>
+    <div class="chip-row" id="filter-presets">
+      <button class="chip active" data-preset="none">None</button>
+      <button class="chip" data-preset="gray">Mono</button>
+      <button class="chip" data-preset="sepia">Sepia</button>
+    </div>
+    <label class="slider-row"><span class="slider-label wide">Bright</span><input type="range" id="flt-bright" min="40" max="160" value="100"><span id="flt-bright-val" class="slider-val">100%</span></label>
+    <label class="slider-row"><span class="slider-label wide">Contrast</span><input type="range" id="flt-contrast" min="40" max="160" value="100"><span id="flt-contrast-val" class="slider-val">100%</span></label>
+    <label class="slider-row"><span class="slider-label wide">Saturate</span><input type="range" id="flt-sat" min="0" max="200" value="100"><span id="flt-sat-val" class="slider-val">100%</span></label>
+    <button id="btn-filter-reset" class="btn-ghost small">Reset</button>
+  </div>
+  <div id="sheet-fade" class="sheet hidden">
+    <div class="sheet-title">Fade in / out</div>
+    <div class="fade-row"><span class="slider-label">In</span>
+      <div class="chip-row" id="fade-in-chips">
+        <button class="chip active" data-fade="0">Off</button>
+        <button class="chip" data-fade="0.5">0.5s</button>
+        <button class="chip" data-fade="1">1s</button>
+        <button class="chip" data-fade="2">2s</button>
+      </div>
+    </div>
+    <div class="fade-row"><span class="slider-label">Out</span>
+      <div class="chip-row" id="fade-out-chips">
+        <button class="chip active" data-fade="0">Off</button>
+        <button class="chip" data-fade="0.5">0.5s</button>
+        <button class="chip" data-fade="1">1s</button>
+        <button class="chip" data-fade="2">2s</button>
       </div>
     </div>
   </div>

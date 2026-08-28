@@ -825,3 +825,35 @@ svg { width: 24px; height: 24px; fill: currentColor; display: block; }
 }
 .color-chip.active { border-color: var(--pink); box-shadow: 0 0 0 1.5px rgba(255,255,255,.5); }
 .text-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ==================== phase 4: filter / fade / emoji / capture ==================== */
+.slider-label.wide { width: 70px; }
+
+.emoji-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.emoji-chip {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1.5px solid #4a4a4d;
+  background: #333336;
+  font-size: 21px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.emoji-chip:active { border-color: var(--pink); }
+
+.fade-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+.fade-row .chip-row { flex: 1; }
+.fade-row .chip { padding: 7px 0; font-size: 13px; }
+
+#filter-presets { margin-bottom: 8px; }
+#btn-filter-reset { margin-top: 6px; }

@@ -32,6 +32,10 @@
     voices: [],        // [{startOut, blob, url, el, duration}] on the OUTPUT timeline
     voiceRec: null,    // active narration recording
     voiceWarned: false, // desync warning shown once per session
+    filters: { bright: 100, contrast: 100, saturate: 100, preset: 'none' },
+    fadeIn: 0,         // seconds on the output timeline
+    fadeOut: 0,
+    redoStack: [],
     texts: [],         // [{text, x, y, size, color}] x/y top-left fractions, size = % of width
     wm: null,          // {file, url, img, x, y, w, aspect}
     textStyle: { color: '#ffffff', size: 6 },
@@ -108,18 +112,34 @@
       voices: E.voices.slice(),
       texts: E.texts.map((t) => ({ ...t })),
       wm: E.wm ? { ...E.wm } : null,
+      filters: { ...E.filters },
+      fadeIn: E.fadeIn,
+      fadeOut: E.fadeOut,
     };
   }
 
   function pushUndo() {
     E.undoStack.push(snapshot());
     if (E.undoStack.length > UNDO_MAX) E.undoStack.shift();
+    E.redoStack = []; // a new action invalidates the redo history
     updateUndoBtn();
   }
 
   function undo() {
     const snap = E.undoStack.pop();
     if (!snap) return;
+    E.redoStack.push(snapshot());
+    restoreSnap(snap);
+  }
+
+  function redo() {
+    const snap = E.redoStack.pop();
+    if (!snap) return;
+    E.undoStack.push(snapshot());
+    restoreSnap(snap);
+  }
+
+  function restoreSnap(snap) {
     pause();
     E.segments = snap.segments;
     E.sel = Math.min(snap.sel, E.segments.length - 1);
@@ -132,6 +152,9 @@
     E.voices = snap.voices;
     E.texts = snap.texts;
     E.wm = snap.wm;
+    E.filters = { ...snap.filters };
+    E.fadeIn = snap.fadeIn;
+    E.fadeOut = snap.fadeOut;
     if (snap.bgmFile !== E.bgm) setBgm(snap.bgmFile);
     if (E.video) {
       E.video.playbackRate = E.speed;
@@ -151,6 +174,30 @@
 
   function updateUndoBtn() {
     $('edit-undo').disabled = E.undoStack.length === 0;
+    $('edit-redo').disabled = E.redoStack.length === 0;
+  }
+
+  /* ---------------- filters / fade ---------------- */
+  function isDefaultFilter() {
+    const f = E.filters;
+    return f.bright === 100 && f.contrast === 100 && f.saturate === 100 && f.preset === 'none';
+  }
+
+  function filterString() {
+    const f = E.filters;
+    let s = `brightness(${f.bright}%) contrast(${f.contrast}%) saturate(${f.saturate}%)`;
+    if (f.preset === 'gray') s += ' grayscale(1)';
+    else if (f.preset === 'sepia') s += ' sepia(1)';
+    return s;
+  }
+
+  /* 0..1 opacity/volume multiplier at an output-timeline position */
+  function fadeFactor(outT) {
+    const total = editedTotal() / E.speed;
+    let f = 1;
+    if (E.fadeIn > 0 && outT < E.fadeIn) f = Math.min(f, outT / E.fadeIn);
+    if (E.fadeOut > 0 && outT > total - E.fadeOut) f = Math.min(f, Math.max(0, (total - outT) / E.fadeOut));
+    return clamp(f, 0, 1);
   }
 
   /* ---------------- open / close ---------------- */
@@ -163,6 +210,9 @@
     E.speed = 1; E.volume = 1; E.bgmVolume = 0.6; E.voiceVolume = 1; E.rotate = 0;
     E.playing = false;
     E.voiceWarned = false;
+    E.filters = { bright: 100, contrast: 100, saturate: 100, preset: 'none' };
+    E.fadeIn = 0; E.fadeOut = 0;
+    E.redoStack = [];
 
     const v = document.createElement('video');
     v.playsInline = true;
@@ -215,6 +265,7 @@
     E.wm = null;
     E.bgm = null; E.bgmUrl = null;
     E.undoStack = [];
+    E.redoStack = [];
     disableFacecam();
     E.playing = false;
     E.url = null;
@@ -249,10 +300,16 @@
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, c.width, c.height);
     ctx.save();
+    if (!isDefaultFilter()) ctx.filter = filterString();
     ctx.translate(c.width / 2, c.height / 2);
     ctx.rotate((E.rotate * Math.PI) / 180);
     ctx.drawImage(v, -vw / 2, -vh / 2, vw, vh);
     ctx.restore();
+    const f = fadeFactor(computeOutT(v.currentTime));
+    if (f < 1) {
+      ctx.fillStyle = `rgba(0,0,0,${(1 - f).toFixed(3)})`;
+      ctx.fillRect(0, 0, c.width, c.height);
+    }
   }
 
   function startLoop() {
@@ -279,7 +336,17 @@
           if (next) v.currentTime = next.start;
           else { pause(); v.currentTime = E.segments[0].start; }
         }
-        if (E.playing) syncVoicePreview(computeOutT(v.currentTime));
+        if (E.playing) {
+          const outT = computeOutT(v.currentTime);
+          syncVoicePreview(outT);
+          // fade audio along with the picture
+          const f = fadeFactor(outT);
+          v.volume = clamp(E.volume, 0, 1) * f;
+          if (E.bgmEl && !E.bgmEl.paused) E.bgmEl.volume = clamp(E.bgmVolume, 0, 1) * f;
+          E.voices.forEach((vc) => {
+            if (vc.el && !vc.el.paused) vc.el.volume = clamp(E.voiceVolume, 0, 1) * f;
+          });
+        }
       }
       drawFrame(ctx, c, v);
       positionPlayhead();
@@ -907,7 +974,7 @@
   }
 
   /* ---------------- tool sheets ---------------- */
-  const SHEETS = ['sheet-speed', 'sheet-volume', 'sheet-audio', 'sheet-voice', 'sheet-text'];
+  const SHEETS = ['sheet-speed', 'sheet-volume', 'sheet-audio', 'sheet-voice', 'sheet-text', 'sheet-filter', 'sheet-fade'];
   function toggleSheet(id) {
     SHEETS.forEach((s) => $(s).classList.toggle('hidden', s !== id || !$(id).classList.contains('hidden')));
   }
@@ -928,6 +995,25 @@
     $('bgm-name').textContent = E.bgm ? E.bgm.name : 'No music added';
     $('btn-bgm-remove').classList.toggle('hidden', !E.bgm);
     $('tool-audio').classList.toggle('active', !!E.bgm);
+    // filters
+    $('flt-bright').value = E.filters.bright;
+    $('flt-bright-val').textContent = E.filters.bright + '%';
+    $('flt-contrast').value = E.filters.contrast;
+    $('flt-contrast-val').textContent = E.filters.contrast + '%';
+    $('flt-sat').value = E.filters.saturate;
+    $('flt-sat-val').textContent = E.filters.saturate + '%';
+    document.querySelectorAll('#filter-presets .chip').forEach((ch) => {
+      ch.classList.toggle('active', ch.dataset.preset === E.filters.preset);
+    });
+    $('tool-filter').classList.toggle('active', !isDefaultFilter());
+    // fades
+    document.querySelectorAll('#fade-in-chips .chip').forEach((ch) => {
+      ch.classList.toggle('active', parseFloat(ch.dataset.fade) === E.fadeIn);
+    });
+    document.querySelectorAll('#fade-out-chips .chip').forEach((ch) => {
+      ch.classList.toggle('active', parseFloat(ch.dataset.fade) === E.fadeOut);
+    });
+    $('tool-fade').classList.toggle('active', E.fadeIn > 0 || E.fadeOut > 0);
     updateLabels();
   }
 
@@ -1015,21 +1101,23 @@
     const actx = new (window.AudioContext || window.webkitAudioContext)();
     await actx.resume().catch(() => {});
     const dest = actx.createMediaStreamDestination();
+    let vgainNode = null;
     try {
       const vsrc = actx.createMediaElementSource(v);
-      const vgain = actx.createGain();
-      vgain.gain.value = E.volume;
-      vsrc.connect(vgain).connect(dest);
+      vgainNode = actx.createGain();
+      vgainNode.gain.value = E.volume;
+      vsrc.connect(vgainNode).connect(dest);
     } catch (e) { /* no audio track */ }
 
     let bgmEl = null;
+    let bgainNode = null;
     if (E.bgmUrl) {
       bgmEl = new Audio(E.bgmUrl);
       bgmEl.loop = true;
       const bsrc = actx.createMediaElementSource(bgmEl);
-      const bgain = actx.createGain();
-      bgain.gain.value = E.bgmVolume;
-      bsrc.connect(bgain).connect(dest);
+      bgainNode = actx.createGain();
+      bgainNode.gain.value = E.bgmVolume;
+      bsrc.connect(bgainNode).connect(dest);
     }
 
     // narration clips: fresh elements routed into the mix
@@ -1097,6 +1185,10 @@
           if (token.cancel || v.ended || v.currentTime >= seg.end - 0.02) { res(); return; }
           const outT = doneOut + (v.currentTime - seg.start) / E.speed;
           syncVoicesExport(outT);
+          const f = fadeFactor(outT);
+          if (vgainNode) vgainNode.gain.value = E.volume * f;
+          if (bgainNode) bgainNode.gain.value = E.bgmVolume * f;
+          voiceGain.gain.value = E.voiceVolume * f;
           onProgress(outT / totalOut);
           requestAnimationFrame(check);
         };
@@ -1130,6 +1222,7 @@
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (v.videoWidth) {
       ctx.save();
+      if (!isDefaultFilter()) ctx.filter = filterString();
       ctx.translate(canvas.width / 2, canvas.height / 2);
       ctx.rotate((E.rotate * Math.PI) / 180);
       ctx.drawImage(v, -v.videoWidth / 2, -v.videoHeight / 2, v.videoWidth, v.videoHeight);
@@ -1168,6 +1261,38 @@
       ctx.fillText(t.text, t.x * canvas.width, t.y * canvas.height);
       ctx.restore();
     }
+    // fade covers the whole composited frame, overlays included
+    const f = fadeFactor(computeOutT(v.currentTime));
+    if (f < 1) {
+      ctx.fillStyle = `rgba(0,0,0,${(1 - f).toFixed(3)})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+
+  /* ---------------- frame capture ---------------- */
+  function captureFrame() {
+    if (!E.video || !E.video.videoWidth) {
+      window.App.toast('영상이 아직 준비되지 않았습니다.');
+      return;
+    }
+    const ec = $('edit-canvas');
+    const c = document.createElement('canvas');
+    c.width = ec.width;
+    c.height = ec.height;
+    const camV = E.facecam.enabled ? $('facecam-video') : null;
+    drawExportFrame(c.getContext('2d'), c, E.video, camV);
+    c.toBlob((blob) => {
+      if (!blob) { window.App.toast('캡처에 실패했습니다.'); return; }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${E.item.name}-frame-${fmtT(E.video.currentTime).replace(':', 'm').replace('.', 's')}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      window.App.toast('현재 장면을 PNG로 저장했습니다.', 1800);
+    }, 'image/png');
   }
 
   /* ---------------- wiring ---------------- */
@@ -1178,6 +1303,7 @@
     $('edit-back').addEventListener('click', closeEditor);
     $('edit-export').addEventListener('click', doExport);
     $('edit-undo').addEventListener('click', undo);
+    $('edit-redo').addEventListener('click', redo);
     $('edit-play').addEventListener('click', togglePlay);
     $('edit-canvas').addEventListener('click', togglePlay);
 
@@ -1190,6 +1316,44 @@
     $('tool-audio').addEventListener('click', () => toggleSheet('sheet-audio'));
     $('tool-voice').addEventListener('click', () => toggleSheet('sheet-voice'));
     $('tool-text').addEventListener('click', () => toggleSheet('sheet-text'));
+    $('tool-filter').addEventListener('click', () => toggleSheet('sheet-filter'));
+    $('tool-fade').addEventListener('click', () => toggleSheet('sheet-fade'));
+    $('tool-capture').addEventListener('click', captureFrame);
+
+    // filter controls
+    [['flt-bright', 'bright'], ['flt-contrast', 'contrast'], ['flt-sat', 'saturate']].forEach(([id, key]) => {
+      $(id).addEventListener('pointerdown', pushUndo);
+      $(id).addEventListener('input', (e) => {
+        E.filters[key] = parseInt(e.target.value, 10);
+        $(id + '-val').textContent = e.target.value + '%';
+        $('tool-filter').classList.toggle('active', !isDefaultFilter());
+      });
+    });
+    $('filter-presets').addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      pushUndo();
+      E.filters.preset = chip.dataset.preset;
+      document.querySelectorAll('#filter-presets .chip').forEach((c) => c.classList.toggle('active', c === chip));
+      $('tool-filter').classList.toggle('active', !isDefaultFilter());
+    });
+    $('btn-filter-reset').addEventListener('click', () => {
+      pushUndo();
+      E.filters = { bright: 100, contrast: 100, saturate: 100, preset: 'none' };
+      syncControlsUI();
+    });
+
+    // fade controls
+    [['fade-in-chips', 'fadeIn'], ['fade-out-chips', 'fadeOut']].forEach(([id, key]) => {
+      $(id).addEventListener('click', (e) => {
+        const chip = e.target.closest('.chip');
+        if (!chip) return;
+        pushUndo();
+        E[key] = parseFloat(chip.dataset.fade);
+        document.querySelectorAll(`#${id} .chip`).forEach((c) => c.classList.toggle('active', c === chip));
+        $('tool-fade').classList.toggle('active', E.fadeIn > 0 || E.fadeOut > 0);
+      });
+    });
 
     $('speed-chips').addEventListener('click', (e) => {
       const chip = e.target.closest('.chip');
@@ -1232,6 +1396,13 @@
 
     $('btn-text-add').addEventListener('click', addText);
     $('text-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addText(); });
+    $('emoji-row').addEventListener('click', (e) => {
+      const chip = e.target.closest('.emoji-chip');
+      if (!chip) return;
+      pushUndo();
+      E.texts.push({ text: chip.textContent, x: 0.42, y: 0.36, size: 12, color: '#ffffff' });
+      renderTexts();
+    });
     $('text-colors').addEventListener('click', (e) => {
       const chip = e.target.closest('.color-chip');
       if (!chip) return;
