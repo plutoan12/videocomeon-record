@@ -65,10 +65,23 @@
       <svg viewBox="0 0 24 24"><path d="M15.5 4.5L8 12l7.5 7.5-1.8 1.8L4.5 12l9.2-9.3z"/></svg>
     </button>
     <h2>My Videos</h2>
-    <span class="bar-spacer"></span>
+    <div class="bar-group">
+      <button id="lib-import" class="icon-btn light" title="Import video file" aria-label="Import video file">
+        <svg viewBox="0 0 24 24"><path d="M12 3l4 4h-3v6h-2V7H8l4-4zM5 19h14v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6h2v6z"/></svg>
+      </button>
+      <button id="lib-merge" class="icon-btn light" title="Merge clips" aria-label="Merge clips">
+        <svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h6v2H5v6H3V6zm18 12a2 2 0 0 1-2 2h-6v-2h6v-6h2v6zM9 9h12v2H9V9zm0 4h8v2H9v-2z" opacity="0"/><path d="M4 5h7a1 1 0 0 1 1 1v3h-2V7H5v8h3v2H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm9 4h7a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zm1 2v6h5v-6h-5z"/></svg>
+      </button>
+    </div>
+    <input type="file" id="import-file" accept="video/*" class="hidden">
   </header>
   <div class="lib-banner">Recordings are stored only in this browser. Download important files before clearing browser data.</div>
   <div id="lib-list" class="lib-list"></div>
+  <div id="merge-bar" class="merge-bar hidden">
+    <span id="merge-hint" class="merge-hint">합칠 클립을 순서대로 선택하세요</span>
+    <button id="merge-cancel" class="btn-ghost small">Cancel</button>
+    <button id="merge-go" class="btn-pink small" disabled>Merge (0)</button>
+  </div>
   <div class="lib-tabs">
     <button id="tab-recording" class="lib-tab active">Recording</button>
     <button id="tab-edited" class="lib-tab">Edit File</button>
@@ -128,6 +141,7 @@
     <button class="tool" id="tool-text"><svg viewBox="0 0 24 24"><path d="M4 5h16v3.5h-6.2V19h-3.6V8.5H4z"/></svg><span>Text</span></button>
     <button class="tool" id="tool-split"><svg viewBox="0 0 24 24"><path d="M11 3h2v18h-2zM4 6h5v12H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zm11 0h5a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-5z"/></svg><span>Split</span></button>
     <button class="tool" id="tool-delete"><svg viewBox="0 0 24 24"><path d="M9 3v1H4v2h16V4h-5V3H9zM6 8v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8H6zm3 2h2v9H9v-9zm4 0h2v9h-2v-9z"/></svg><span>Delete</span></button>
+    <button class="tool" id="tool-mute"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm12.6 1.3l-1.4 1.4 2.1 2.1-2.1 2.1 1.4 1.4 2.1-2.1 2.1 2.1 1.4-1.4-2.1-2.1 2.1-2.1-1.4-1.4-2.1 2.1-2.1-2.1z"/></svg><span>Mute</span></button>
     <button class="tool" id="tool-speed"><svg viewBox="0 0 24 24"><path d="M12 4a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.2 4.5l1.7-1A7 7 0 1 1 19 13a6.9 6.9 0 0 1-.9 3.4l1.7 1A8.9 8.9 0 0 0 21 13a9 9 0 0 0-9-9zm3.5 4.1l-4.2 3.4a1.8 1.8 0 1 0 1.2 1.6l3.4-4.6z"/></svg><span>Speed</span></button>
     <button class="tool" id="tool-volume"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg><span>Volume</span></button>
     <button class="tool" id="tool-rotate"><svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg><span>Rotate</span></button>
@@ -329,7 +343,7 @@
 
 <div id="overlay-export" class="fullscreen-overlay hidden">
   <div class="export-card">
-    <div class="export-title">Exporting…</div>
+    <div class="export-title" id="export-title">Exporting…</div>
     <div class="export-note">편집한 길이만큼 시간이 걸립니다. 탭을 닫거나 백그라운드로 보내지 마세요.</div>
     <div class="progress"><div id="export-bar" class="progress-bar"></div></div>
     <div id="export-pct" class="export-pct">0%</div>

@@ -884,3 +884,52 @@ svg { width: 24px; height: 24px; fill: currentColor; display: block; }
 .crop-mode .facecam-box,
 .crop-mode .wm-box,
 .crop-mode .stage-play { display: none; }
+
+/* ==================== phase 6: merge / import / mute ==================== */
+.merge-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #232325;
+  border-top: 1px solid #3a3a3c;
+}
+.merge-hint {
+  flex: 1;
+  font-size: 13px;
+  color: #bbb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib-thumb.merge-selected {
+  outline: 3px solid var(--pink);
+  outline-offset: -3px;
+}
+.merge-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--pink);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tl-seg.muted { background: rgba(255, 70, 70, .22); }
+.tl-seg.muted::after {
+  content: "🔇";
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 12px;
+  line-height: 1;
+}

@@ -314,6 +314,198 @@
     }
   }
 
+  /* ---------------- import ---------------- */
+  async function importVideoFile(file) {
+    if (!file.type.startsWith('video/')) {
+      toast('영상 파일이 아닙니다.');
+      return;
+    }
+    toast('불러오는 중…');
+    const [duration, thumb] = await Promise.all([probeDuration(file), makeThumb(file)]);
+    if (!duration) {
+      toast('이 브라우저에서 재생할 수 없는 형식입니다.');
+      return;
+    }
+    const base = (file.name || 'video').replace(/\.[^.]+$/, '') || 'video';
+    const items = await VideoDB.all();
+    const names = new Set(items.map((i) => i.name));
+    let name = base;
+    for (let n = 2; names.has(name); n++) name = `${base}(${n})`;
+    const item = {
+      name,
+      blob: file,
+      mimeType: file.type,
+      duration,
+      width: 0,
+      height: 0,
+      createdAt: Date.now(),
+      thumb,
+      edited: false,
+    };
+    item.id = await VideoDB.add(item);
+    renderLibrary();
+    toast('영상을 가져왔습니다.', 1600);
+  }
+
+  /* ---------------- merge clips ---------------- */
+  let mergeMode = false;
+  let mergeSel = []; // item ids in selection order
+  let mergeToken = null;
+
+  function setMergeMode(on) {
+    mergeMode = on;
+    mergeSel = [];
+    $('merge-bar').classList.toggle('hidden', !on);
+    updateMergeBar();
+    renderLibrary();
+  }
+
+  function updateMergeBar() {
+    const go = $('merge-go');
+    go.textContent = `Merge (${mergeSel.length})`;
+    go.disabled = mergeSel.length < 2;
+  }
+
+  function loadClipVideo(blob) {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const v = document.createElement('video');
+      v.preload = 'auto';
+      v.playsInline = true;
+      v.onloadedmetadata = async () => {
+        if (!isFinite(v.duration) || v.duration <= 0) {
+          await new Promise((res) => { v.onseeked = res; v.currentTime = 1e7; setTimeout(res, 3000); });
+          await new Promise((res) => { v.onseeked = res; v.currentTime = 0; setTimeout(res, 3000); });
+        }
+        resolve({ v, url, duration: isFinite(v.duration) ? v.duration : 0 });
+      };
+      v.onerror = () => resolve({ v, url, duration: 0 });
+      v.src = url;
+    });
+  }
+
+  async function mergeClips(ids) {
+    if (mergeToken) return;
+    const token = { cancel: false };
+    mergeToken = token;
+    $('export-title').textContent = 'Merging…';
+    $('overlay-export').classList.remove('hidden');
+    $('export-bar').style.width = '0%';
+    $('export-pct').textContent = '0%';
+
+    const clips = [];
+    try {
+      for (const id of ids) {
+        const item = await VideoDB.get(id);
+        if (item) clips.push(await loadClipVideo(item.blob));
+      }
+      const usable = clips.filter((c) => c.duration > 0 && c.v.videoWidth);
+      if (usable.length < 2) throw new Error('합칠 수 있는 클립이 2개 미만입니다.');
+
+      const W = usable[0].v.videoWidth - (usable[0].v.videoWidth % 2);
+      const H = usable[0].v.videoHeight - (usable[0].v.videoHeight % 2);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(2, W);
+      canvas.height = Math.max(2, H);
+      const cx = canvas.getContext('2d');
+
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      await actx.resume().catch(() => {});
+      const dest = actx.createMediaStreamDestination();
+      usable.forEach((c) => {
+        try { actx.createMediaElementSource(c.v).connect(dest); } catch (e) { /* no audio */ }
+      });
+
+      const stream = new MediaStream([
+        ...canvas.captureStream(30).getVideoTracks(),
+        ...dest.stream.getAudioTracks(),
+      ]);
+      const mimeType = pickMimeType();
+      const opts = { videoBitsPerSecond: 8_000_000 };
+      if (mimeType) opts.mimeType = mimeType;
+      const rec = new MediaRecorder(stream, opts);
+      const chunks = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      const stopped = new Promise((res) => { rec.onstop = res; });
+
+      let current = null;
+      let pumping = true;
+      const pump = () => {
+        if (!pumping) return;
+        if (current && current.videoWidth) {
+          cx.fillStyle = '#000';
+          cx.fillRect(0, 0, canvas.width, canvas.height);
+          const s = Math.min(canvas.width / current.videoWidth, canvas.height / current.videoHeight);
+          const dw = current.videoWidth * s, dh = current.videoHeight * s;
+          cx.drawImage(current, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+        }
+        requestAnimationFrame(pump);
+      };
+      requestAnimationFrame(pump);
+      rec.start(500);
+
+      const total = usable.reduce((a, c) => a + c.duration, 0);
+      let done = 0;
+      for (const clip of usable) {
+        if (token.cancel) break;
+        current = clip.v;
+        clip.v.currentTime = 0;
+        await new Promise((res) => { clip.v.onseeked = res; setTimeout(res, 2000); });
+        await clip.v.play().catch(() => {});
+        await new Promise((res) => {
+          const check = () => {
+            if (token.cancel || clip.v.ended || clip.v.currentTime >= clip.duration - 0.05) { res(); return; }
+            const p = (done + clip.v.currentTime) / total;
+            $('export-bar').style.width = (p * 100).toFixed(1) + '%';
+            $('export-pct').textContent = Math.round(p * 100) + '%';
+            requestAnimationFrame(check);
+          };
+          check();
+        });
+        clip.v.pause();
+        done += clip.duration;
+      }
+
+      pumping = false;
+      rec.stop();
+      await stopped;
+      actx.close().catch(() => {});
+
+      if (!token.cancel && chunks.length) {
+        const type = mimeType ? mimeType.split(';')[0] : 'video/webm';
+        const blob = new Blob(chunks, { type });
+        const [duration, thumb] = await Promise.all([probeDuration(blob), makeThumb(blob)]);
+        const d = new Date();
+        const day = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+        const all = await VideoDB.all();
+        const n = all.filter((it) => it.name && it.name.startsWith(day + '-merge')).length + 1;
+        const item = {
+          name: `${day}-merge-${n}`,
+          blob,
+          mimeType: type,
+          duration,
+          width: canvas.width,
+          height: canvas.height,
+          createdAt: Date.now(),
+          thumb,
+          edited: false,
+        };
+        item.id = await VideoDB.add(item);
+        setMergeMode(false);
+        openPreview(item);
+      } else if (token.cancel) {
+        toast('합치기를 취소했습니다.');
+      }
+    } catch (err) {
+      toast('합치기 실패: ' + (err && err.message ? err.message : err));
+    } finally {
+      clips.forEach((c) => { c.v.pause(); c.v.removeAttribute('src'); c.v.load(); URL.revokeObjectURL(c.url); });
+      $('overlay-export').classList.add('hidden');
+      $('export-title').textContent = 'Exporting…';
+      mergeToken = null;
+    }
+  }
+
   /* ---------------- library ---------------- */
   let libTab = 'recording'; // 'recording' | 'edited'
 
@@ -342,7 +534,25 @@
       thumb.className = 'lib-thumb';
       thumb.setAttribute('aria-label', 'Play ' + item.name);
       if (item.thumb) thumb.style.backgroundImage = `url("${item.thumb}")`;
-      thumb.addEventListener('click', () => openPreview(item));
+      if (mergeMode) {
+        const pos = mergeSel.indexOf(item.id);
+        if (pos !== -1) {
+          thumb.classList.add('merge-selected');
+          const badge = document.createElement('span');
+          badge.className = 'merge-badge';
+          badge.textContent = pos + 1;
+          thumb.appendChild(badge);
+        }
+        thumb.addEventListener('click', () => {
+          const i = mergeSel.indexOf(item.id);
+          if (i === -1) mergeSel.push(item.id);
+          else mergeSel.splice(i, 1);
+          updateMergeBar();
+          renderLibrary();
+        });
+      } else {
+        thumb.addEventListener('click', () => openPreview(item));
+      }
 
       const info = document.createElement('div');
       info.className = 'lib-info';
@@ -392,6 +602,8 @@
 
   function setLibTab(tab) {
     libTab = tab;
+    mergeSel = [];
+    updateMergeBar();
     $('tab-recording').classList.toggle('active', tab === 'recording');
     $('tab-edited').classList.toggle('active', tab === 'edited');
     renderLibrary();
@@ -436,9 +648,26 @@
 
   // library
   $('card-videos').addEventListener('click', () => { renderLibrary(); show('view-videos'); });
-  $('lib-back').addEventListener('click', () => show('view-home'));
+  $('lib-back').addEventListener('click', () => { setMergeMode(false); show('view-home'); });
   $('tab-recording').addEventListener('click', () => setLibTab('recording'));
   $('tab-edited').addEventListener('click', () => setLibTab('edited'));
+
+  // import
+  $('lib-import').addEventListener('click', () => $('import-file').click());
+  $('import-file').addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) importVideoFile(e.target.files[0]);
+    e.target.value = '';
+  });
+
+  // merge
+  $('lib-merge').addEventListener('click', () => setMergeMode(!mergeMode));
+  $('merge-cancel').addEventListener('click', () => setMergeMode(false));
+  $('merge-go').addEventListener('click', () => {
+    if (mergeSel.length >= 2) mergeClips(mergeSel.slice());
+  });
+  $('export-cancel').addEventListener('click', () => {
+    if (mergeToken) mergeToken.cancel = true;
+  });
 
   // preview
   $('pv-back').addEventListener('click', () => { renderLibrary(); show('view-videos'); });

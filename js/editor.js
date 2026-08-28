@@ -504,9 +504,10 @@
         if (E.playing) {
           const outT = computeOutT(v.currentTime);
           syncVoicePreview(outT);
-          // fade audio along with the picture
+          // fade audio along with the picture; muted segments silence the clip only
           const f = fadeFactor(outT);
-          v.volume = clamp(E.volume, 0, 1) * f;
+          const cur = E.segments[segmentAt(v.currentTime)];
+          v.volume = (cur && cur.muted ? 0 : clamp(E.volume, 0, 1)) * f;
           if (E.bgmEl && !E.bgmEl.paused) E.bgmEl.volume = clamp(E.bgmVolume, 0, 1) * f;
           E.voices.forEach((vc) => {
             if (vc.el && !vc.el.paused) vc.el.volume = clamp(E.voiceVolume, 0, 1) * f;
@@ -893,9 +894,11 @@
     if (cursor < dur - 0.01) addBox('tl-del', cursor, dur);
     // segment boundaries (clickable) + selected highlight
     E.segments.forEach((seg, i) => {
-      const d = addBox('tl-seg' + (i === E.sel ? ' sel' : ''), seg.start, seg.end);
+      const d = addBox('tl-seg' + (i === E.sel ? ' sel' : '') + (seg.muted ? ' muted' : ''), seg.start, seg.end);
       d.dataset.idx = i;
     });
+    const selSeg = E.segments[E.sel];
+    $('tool-mute').classList.toggle('active', !!(selSeg && selSeg.muted));
     // handles on selected segment
     const seg = E.segments[E.sel];
     if (seg) {
@@ -1014,6 +1017,17 @@
     E.sel = Math.min(E.sel, E.segments.length - 1);
     E.video.currentTime = E.segments[E.sel].start;
     renderTimeline();
+  }
+
+  function toggleMuteSel() {
+    const seg = E.segments[E.sel];
+    if (!seg) return;
+    pushUndo();
+    seg.muted = !seg.muted;
+    renderTimeline();
+    window.App.toast(seg.muted
+      ? '선택 구간의 소리를 끔 (배경음악·나레이션은 유지)'
+      : '선택 구간의 소리를 다시 켬', 1800);
   }
 
   function rotate() {
@@ -1359,7 +1373,7 @@
           const outT = doneOut + (v.currentTime - seg.start) / E.speed;
           syncVoicesExport(outT);
           const f = fadeFactor(outT);
-          if (vgainNode) vgainNode.gain.value = E.volume * f;
+          if (vgainNode) vgainNode.gain.value = (seg.muted ? 0 : E.volume) * f;
           if (bgainNode) bgainNode.gain.value = E.bgmVolume * f;
           voiceGain.gain.value = E.voiceVolume * f;
           onProgress(outT / totalOut);
@@ -1476,6 +1490,7 @@
 
     $('tool-split').addEventListener('click', split);
     $('tool-delete').addEventListener('click', deleteSel);
+    $('tool-mute').addEventListener('click', toggleMuteSel);
     $('tool-rotate').addEventListener('click', rotate);
     $('tool-facecam').addEventListener('click', toggleFacecam);
     $('tool-speed').addEventListener('click', () => toggleSheet('sheet-speed'));
