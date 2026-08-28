@@ -110,6 +110,11 @@
         <svg viewBox="0 0 24 24"><path d="M7 17l10-10M13 7h4v4M11 17H7v-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
       </div>
     </div>
+    <div id="crop-box" class="crop-box hidden">
+      <div id="crop-resize" class="facecam-resize">
+        <svg viewBox="0 0 24 24"><path d="M7 17l10-10M13 7h4v4M11 17H7v-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+      </div>
+    </div>
     <button id="edit-play" class="stage-play" aria-label="Play or pause">
       <svg id="ic-eplay" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
       <svg id="ic-epause" class="hidden" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
@@ -126,6 +131,8 @@
     <button class="tool" id="tool-speed"><svg viewBox="0 0 24 24"><path d="M12 4a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.2 4.5l1.7-1A7 7 0 1 1 19 13a6.9 6.9 0 0 1-.9 3.4l1.7 1A8.9 8.9 0 0 0 21 13a9 9 0 0 0-9-9zm3.5 4.1l-4.2 3.4a1.8 1.8 0 1 0 1.2 1.6l3.4-4.6z"/></svg><span>Speed</span></button>
     <button class="tool" id="tool-volume"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg><span>Volume</span></button>
     <button class="tool" id="tool-rotate"><svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg><span>Rotate</span></button>
+    <button class="tool" id="tool-crop"><svg viewBox="0 0 24 24"><path d="M7 1v4h10a2 2 0 0 1 2 2v10h4v2h-4v4h-2v-4H7a2 2 0 0 1-2-2V7H1V5h4V1h2zm0 6v8a0 0 0 0 0 0 0h10V7H7z" opacity="0"/><path d="M7 1h2v4h8a2 2 0 0 1 2 2v8h4v2h-4v6h-2v-6H7a2 2 0 0 1-2-2V7H1V5h4V1h2zm2 6v8h8V7H9z" fill-rule="evenodd"/></svg><span>Crop</span></button>
+    <button class="tool" id="tool-ratio"><svg viewBox="0 0 24 24"><path d="M3 5a2 2 0 0 1 2-2h6v2H5v6H3V5zm18 14a2 2 0 0 1-2 2h-6v-2h6v-6h2v6zM14 3h5a2 2 0 0 1 2 2v5h-2V5h-5V3zM3 14v5a2 2 0 0 0 2 2h5v-2H5v-5H3z"/></svg><span>Ratio</span></button>
     <button class="tool" id="tool-filter"><svg viewBox="0 0 24 24"><path d="M3 6h18v2.5h-7v2h-4v-2H3zM3 15.5h7v-2h4v2h7V18H3z" opacity="0"/><path d="M4 7h16v2h-5.5v2h-5V9H4zm0 8h5.5v-2h5v2H20v2H4z"/><circle cx="12" cy="8" r="2.2"/><circle cx="12" cy="16" r="2.2"/></svg><span>Filter</span></button>
     <button class="tool" id="tool-fade"><svg viewBox="0 0 24 24"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v12h4V6zm7 0v12h3V6h-3zm6 0v12h1V6z"/></svg><span>Fade</span></button>
     <button class="tool" id="tool-capture"><svg viewBox="0 0 24 24"><path d="M9 4l-1.8 2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9zm3 4.5A4.5 4.5 0 1 1 7.5 13 4.5 4.5 0 0 1 12 8.5zm0 2A2.5 2.5 0 1 0 14.5 13 2.5 2.5 0 0 0 12 10.5z"/></svg><span>Capture</span></button>
@@ -203,6 +210,26 @@
         <button id="btn-wm-remove" class="btn-ghost small hidden">Remove image</button>
         <input type="file" id="wm-file" accept="image/*" class="hidden">
       </div>
+    </div>
+  </div>
+  <div id="sheet-crop" class="sheet hidden">
+    <div class="sheet-title">Crop</div>
+    <div class="sheet-note">화면에서 영역을 드래그로 옮기고 모서리로 크기를 조절한 뒤 Apply를 누르세요.</div>
+    <div class="text-actions">
+      <button id="btn-crop-apply" class="btn-pink small">Apply</button>
+      <button id="btn-crop-clear" class="btn-ghost small">Clear crop</button>
+      <button id="btn-crop-cancel" class="btn-ghost small">Cancel</button>
+    </div>
+  </div>
+  <div id="sheet-ratio" class="sheet hidden">
+    <div class="sheet-title">Aspect ratio</div>
+    <div class="sheet-note">화면비를 바꾸면 남는 영역은 블러 처리된 배경으로 채워집니다. 9:16은 쇼츠/릴스용입니다.</div>
+    <div class="chip-row" id="ratio-chips">
+      <button class="chip active" data-ratio="original">Original</button>
+      <button class="chip" data-ratio="9:16">9:16</button>
+      <button class="chip" data-ratio="1:1">1:1</button>
+      <button class="chip" data-ratio="4:5">4:5</button>
+      <button class="chip" data-ratio="16:9">16:9</button>
     </div>
   </div>
   <div id="sheet-filter" class="sheet hidden">

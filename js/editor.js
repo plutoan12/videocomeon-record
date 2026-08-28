@@ -35,6 +35,10 @@
     filters: { bright: 100, contrast: 100, saturate: 100, preset: 'none' },
     fadeIn: 0,         // seconds on the output timeline
     fadeOut: 0,
+    crop: null,        // {x, y, w, h} fractions of the ROTATED frame, or null
+    cropMode: false,   // crop editing in progress (canvas shows the full frame)
+    cropDraft: null,
+    aspect: 'original', // 'original' | '9:16' | '1:1' | '4:5' | '16:9'
     redoStack: [],
     texts: [],         // [{text, x, y, size, color}] x/y top-left fractions, size = % of width
     wm: null,          // {file, url, img, x, y, w, aspect}
@@ -115,6 +119,8 @@
       filters: { ...E.filters },
       fadeIn: E.fadeIn,
       fadeOut: E.fadeOut,
+      crop: E.crop ? { ...E.crop } : null,
+      aspect: E.aspect,
     };
   }
 
@@ -147,7 +153,6 @@
     E.volume = snap.volume;
     E.bgmVolume = snap.bgmVolume;
     E.voiceVolume = snap.voiceVolume;
-    const rotChanged = E.rotate !== snap.rotate;
     E.rotate = snap.rotate;
     E.voices = snap.voices;
     E.texts = snap.texts;
@@ -155,6 +160,8 @@
     E.filters = { ...snap.filters };
     E.fadeIn = snap.fadeIn;
     E.fadeOut = snap.fadeOut;
+    E.crop = snap.crop ? { ...snap.crop } : null;
+    E.aspect = snap.aspect;
     if (snap.bgmFile !== E.bgm) setBgm(snap.bgmFile);
     if (E.video) {
       E.video.playbackRate = E.speed;
@@ -163,7 +170,7 @@
       const i = segmentAt(E.video.currentTime);
       if (i === -1 && E.segments.length) E.video.currentTime = E.segments[E.sel].start;
     }
-    if (rotChanged) setCanvasSize();
+    setCanvasSize();
     renderTimeline();
     renderTexts();
     renderVoiceList();
@@ -212,6 +219,8 @@
     E.voiceWarned = false;
     E.filters = { bright: 100, contrast: 100, saturate: 100, preset: 'none' };
     E.fadeIn = 0; E.fadeOut = 0;
+    E.crop = null; E.cropMode = false; E.cropDraft = null;
+    E.aspect = 'original';
     E.redoStack = [];
 
     const v = document.createElement('video');
@@ -271,6 +280,12 @@
     E.url = null;
     E._urls.forEach((u) => URL.revokeObjectURL(u));
     E._urls.clear();
+    E.cropMode = false;
+    E.cropDraft = null;
+    E.crop = null;
+    E.aspect = 'original';
+    $('edit-stage').classList.remove('crop-mode');
+    $('crop-box').classList.add('hidden');
     $('facecam-box').classList.add('hidden');
     $('wm-box').classList.add('hidden');
     $('text-layer').innerHTML = '';
@@ -283,33 +298,183 @@
     window.App.show('view-videos');
   }
 
+  /* ---------------- output pipeline: rotate -> crop -> aspect ---------------- */
+  const RATIOS = { '9:16': 9 / 16, '1:1': 1, '4:5': 4 / 5, '16:9': 16 / 9 };
+  const MAX_DIM = 1920; // cap the output canvas so aspect padding stays encodable
+
+  function outputDims() {
+    const vw = (E.video && E.video.videoWidth) || 1280;
+    const vh = (E.video && E.video.videoHeight) || 720;
+    const swap = E.rotate === 90 || E.rotate === 270;
+    const rotW = swap ? vh : vw;
+    const rotH = swap ? vw : vh;
+    const cropX = E.crop ? Math.round(E.crop.x * rotW) : 0;
+    const cropY = E.crop ? Math.round(E.crop.y * rotH) : 0;
+    const cropW = Math.max(2, E.crop ? Math.round(E.crop.w * rotW) : rotW);
+    const cropH = Math.max(2, E.crop ? Math.round(E.crop.h * rotH) : rotH);
+    let W = cropW, H = cropH;
+    if (E.aspect !== 'original' && RATIOS[E.aspect]) {
+      const r = RATIOS[E.aspect];
+      if (cropW / cropH < r) { W = Math.round(cropH * r); H = cropH; }
+      else { W = cropW; H = Math.round(cropW / r); }
+    }
+    const cap = MAX_DIM / Math.max(W, H);
+    if (cap < 1) { W = Math.round(W * cap); H = Math.round(H * cap); }
+    W = Math.max(2, W - (W % 2));
+    H = Math.max(2, H - (H % 2));
+    return { rotW, rotH, cropX, cropY, cropW, cropH, W, H };
+  }
+
+  /* scratch canvas holding the rotated + filtered frame */
+  let tmpC = null, tmpCtx = null;
+  function ensureTmp(w, h) {
+    if (!tmpC) { tmpC = document.createElement('canvas'); tmpCtx = tmpC.getContext('2d'); }
+    if (tmpC.width !== w) tmpC.width = w;
+    if (tmpC.height !== h) tmpC.height = h;
+  }
+
+  /* draw the base picture (rotation, filter, crop, aspect padding) */
+  function drawBase(ctx, canvas, v) {
+    const vw = v.videoWidth, vh = v.videoHeight;
+    if (!vw) return;
+    const d = outputDims();
+    ensureTmp(d.rotW, d.rotH);
+    tmpCtx.save();
+    if (!isDefaultFilter()) tmpCtx.filter = filterString();
+    tmpCtx.fillStyle = '#000';
+    tmpCtx.fillRect(0, 0, d.rotW, d.rotH);
+    tmpCtx.translate(d.rotW / 2, d.rotH / 2);
+    tmpCtx.rotate((E.rotate * Math.PI) / 180);
+    tmpCtx.drawImage(v, -vw / 2, -vh / 2, vw, vh);
+    tmpCtx.restore();
+
+    if (E.cropMode) { // crop editing shows the full uncropped frame
+      ctx.drawImage(tmpC, 0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    const sx = d.cropX, sy = d.cropY, sw = d.cropW, sh = d.cropH;
+    const scale = Math.min(canvas.width / sw, canvas.height / sh);
+    const dw = sw * scale, dh = sh * scale;
+    const dx = (canvas.width - dw) / 2, dy = (canvas.height - dh) / 2;
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (dw < canvas.width - 1 || dh < canvas.height - 1) {
+      // blurred cover background behind the letterboxed picture
+      const cs = Math.max(canvas.width / sw, canvas.height / sh);
+      const bw = sw * cs, bh = sh * cs;
+      ctx.save();
+      ctx.filter = `blur(${Math.max(12, Math.round(Math.max(canvas.width, canvas.height) * 0.02))}px)`;
+      ctx.drawImage(tmpC, sx, sy, sw, sh, (canvas.width - bw) / 2, (canvas.height - bh) / 2, bw, bh);
+      ctx.restore();
+      ctx.fillStyle = 'rgba(0,0,0,.3)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    ctx.drawImage(tmpC, sx, sy, sw, sh, dx, dy, dw, dh);
+  }
+
   /* ---------------- canvas preview ---------------- */
   function setCanvasSize() {
     const c = $('edit-canvas');
-    const vw = E.video.videoWidth || 1280;
-    const vh = E.video.videoHeight || 720;
-    const swap = E.rotate === 90 || E.rotate === 270;
-    c.width = swap ? vh : vw;
-    c.height = swap ? vw : vh;
+    const d = outputDims();
+    c.width = E.cropMode ? d.rotW : d.W;
+    c.height = E.cropMode ? d.rotH : d.H;
     layoutOverlays();
   }
 
   function drawFrame(ctx, c, v) {
-    const vw = v.videoWidth, vh = v.videoHeight;
-    if (!vw) return;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, c.width, c.height);
-    ctx.save();
-    if (!isDefaultFilter()) ctx.filter = filterString();
-    ctx.translate(c.width / 2, c.height / 2);
-    ctx.rotate((E.rotate * Math.PI) / 180);
-    ctx.drawImage(v, -vw / 2, -vh / 2, vw, vh);
-    ctx.restore();
+    if (!v.videoWidth) return;
+    drawBase(ctx, c, v);
+    if (E.cropMode) return;
     const f = fadeFactor(computeOutT(v.currentTime));
     if (f < 1) {
       ctx.fillStyle = `rgba(0,0,0,${(1 - f).toFixed(3)})`;
       ctx.fillRect(0, 0, c.width, c.height);
     }
+  }
+
+  /* ---------------- crop mode ---------------- */
+  function openCropMode() {
+    pause();
+    closeSheets();
+    E.cropMode = true;
+    E.cropDraft = E.crop ? { ...E.crop } : { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+    setCanvasSize();
+    $('edit-stage').classList.add('crop-mode');
+    $('crop-box').classList.remove('hidden');
+    layoutCropBox();
+    $('sheet-crop').classList.remove('hidden');
+  }
+
+  function exitCropMode() {
+    if (!E.cropMode) return;
+    E.cropMode = false;
+    E.cropDraft = null;
+    $('edit-stage').classList.remove('crop-mode');
+    $('crop-box').classList.add('hidden');
+    setCanvasSize();
+    $('tool-crop').classList.toggle('active', !!E.crop);
+  }
+
+  function layoutCropBox() {
+    if (!E.cropMode || !E.cropDraft) return;
+    const cb = contentBox();
+    const box = $('crop-box');
+    box.style.left = (cb.left + E.cropDraft.x * cb.width) + 'px';
+    box.style.top = (cb.top + E.cropDraft.y * cb.height) + 'px';
+    box.style.width = (E.cropDraft.w * cb.width) + 'px';
+    box.style.height = (E.cropDraft.h * cb.height) + 'px';
+  }
+
+  function bindCrop() {
+    const box = $('crop-box');
+    const resize = $('crop-resize');
+
+    box.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.facecam-resize')) return;
+      if (!E.cropDraft) return;
+      e.preventDefault();
+      box.setPointerCapture(e.pointerId);
+      const cb = contentBox();
+      const startX = e.clientX, startY = e.clientY;
+      const ox = E.cropDraft.x, oy = E.cropDraft.y;
+      const move = (ev) => {
+        E.cropDraft.x = clamp(ox + (ev.clientX - startX) / cb.width, 0, 1 - E.cropDraft.w);
+        E.cropDraft.y = clamp(oy + (ev.clientY - startY) / cb.height, 0, 1 - E.cropDraft.h);
+        layoutCropBox();
+      };
+      const up = () => {
+        box.removeEventListener('pointermove', move);
+        box.removeEventListener('pointerup', up);
+        box.removeEventListener('pointercancel', up);
+      };
+      box.addEventListener('pointermove', move);
+      box.addEventListener('pointerup', up);
+      box.addEventListener('pointercancel', up);
+    });
+
+    resize.addEventListener('pointerdown', (e) => {
+      if (!E.cropDraft) return;
+      e.preventDefault();
+      e.stopPropagation();
+      resize.setPointerCapture(e.pointerId);
+      const cb = contentBox();
+      const move = (ev) => {
+        const rect = $('crop-box').getBoundingClientRect();
+        E.cropDraft.w = clamp((ev.clientX - rect.left) / cb.width, 0.15, 1 - E.cropDraft.x);
+        E.cropDraft.h = clamp((ev.clientY - rect.top) / cb.height, 0.15, 1 - E.cropDraft.y);
+        layoutCropBox();
+      };
+      const up = () => {
+        resize.removeEventListener('pointermove', move);
+        resize.removeEventListener('pointerup', up);
+        resize.removeEventListener('pointercancel', up);
+      };
+      resize.addEventListener('pointermove', move);
+      resize.addEventListener('pointerup', up);
+      resize.addEventListener('pointercancel', up);
+    });
   }
 
   function startLoop() {
@@ -375,6 +540,7 @@
     layoutFacecam();
     layoutWm();
     renderTexts();
+    layoutCropBox();
   }
 
   /* ---------------- playback ---------------- */
@@ -974,12 +1140,14 @@
   }
 
   /* ---------------- tool sheets ---------------- */
-  const SHEETS = ['sheet-speed', 'sheet-volume', 'sheet-audio', 'sheet-voice', 'sheet-text', 'sheet-filter', 'sheet-fade'];
+  const SHEETS = ['sheet-speed', 'sheet-volume', 'sheet-audio', 'sheet-voice', 'sheet-text', 'sheet-filter', 'sheet-fade', 'sheet-crop', 'sheet-ratio'];
   function toggleSheet(id) {
+    exitCropMode();
     SHEETS.forEach((s) => $(s).classList.toggle('hidden', s !== id || !$(id).classList.contains('hidden')));
   }
   function closeSheets() {
     SHEETS.forEach((s) => $(s).classList.add('hidden'));
+    exitCropMode();
   }
 
   function syncControlsUI() {
@@ -1014,6 +1182,12 @@
       ch.classList.toggle('active', parseFloat(ch.dataset.fade) === E.fadeOut);
     });
     $('tool-fade').classList.toggle('active', E.fadeIn > 0 || E.fadeOut > 0);
+    // crop / aspect
+    document.querySelectorAll('#ratio-chips .chip').forEach((ch) => {
+      ch.classList.toggle('active', ch.dataset.ratio === E.aspect);
+    });
+    $('tool-ratio').classList.toggle('active', E.aspect !== 'original');
+    $('tool-crop').classList.toggle('active', !!E.crop);
     updateLabels();
   }
 
@@ -1091,11 +1265,10 @@
       await seekTo(v, 0);
     }
 
-    const vw = v.videoWidth, vh = v.videoHeight;
-    const swap = E.rotate === 90 || E.rotate === 270;
+    const dims = outputDims();
     const canvas = document.createElement('canvas');
-    canvas.width = swap ? vh : vw;
-    canvas.height = swap ? vw : vh;
+    canvas.width = dims.W;
+    canvas.height = dims.H;
     const ctx = canvas.getContext('2d');
 
     const actx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1220,14 +1393,7 @@
   function drawExportFrame(ctx, canvas, v, camV) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    if (v.videoWidth) {
-      ctx.save();
-      if (!isDefaultFilter()) ctx.filter = filterString();
-      ctx.translate(canvas.width / 2, canvas.height / 2);
-      ctx.rotate((E.rotate * Math.PI) / 180);
-      ctx.drawImage(v, -v.videoWidth / 2, -v.videoHeight / 2, v.videoWidth, v.videoHeight);
-      ctx.restore();
-    }
+    if (v.videoWidth) drawBase(ctx, canvas, v);
     if (camV && camV.videoWidth) {
       const w = E.facecam.w * canvas.width;
       const h = w / E.facecam.aspect;
@@ -1275,10 +1441,11 @@
       window.App.toast('영상이 아직 준비되지 않았습니다.');
       return;
     }
-    const ec = $('edit-canvas');
+    exitCropMode();
+    const d = outputDims();
     const c = document.createElement('canvas');
-    c.width = ec.width;
-    c.height = ec.height;
+    c.width = d.W;
+    c.height = d.H;
     const camV = E.facecam.enabled ? $('facecam-video') : null;
     drawExportFrame(c.getContext('2d'), c, E.video, camV);
     c.toBlob((blob) => {
@@ -1319,6 +1486,37 @@
     $('tool-filter').addEventListener('click', () => toggleSheet('sheet-filter'));
     $('tool-fade').addEventListener('click', () => toggleSheet('sheet-fade'));
     $('tool-capture').addEventListener('click', captureFrame);
+
+    // crop
+    $('tool-crop').addEventListener('click', () => {
+      if (E.cropMode) closeSheets();
+      else openCropMode();
+    });
+    $('btn-crop-apply').addEventListener('click', () => {
+      if (!E.cropDraft) return;
+      pushUndo();
+      const full = E.cropDraft.x < 0.005 && E.cropDraft.y < 0.005
+        && E.cropDraft.w > 0.99 && E.cropDraft.h > 0.99;
+      E.crop = full ? null : { ...E.cropDraft };
+      closeSheets();
+    });
+    $('btn-crop-clear').addEventListener('click', () => {
+      if (E.crop) { pushUndo(); E.crop = null; }
+      closeSheets();
+    });
+    $('btn-crop-cancel').addEventListener('click', closeSheets);
+
+    // aspect ratio
+    $('tool-ratio').addEventListener('click', () => toggleSheet('sheet-ratio'));
+    $('ratio-chips').addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip || chip.dataset.ratio === E.aspect) return;
+      pushUndo();
+      E.aspect = chip.dataset.ratio;
+      document.querySelectorAll('#ratio-chips .chip').forEach((c) => c.classList.toggle('active', c === chip));
+      $('tool-ratio').classList.toggle('active', E.aspect !== 'original');
+      setCanvasSize();
+    });
 
     // filter controls
     [['flt-bright', 'bright'], ['flt-contrast', 'contrast'], ['flt-sat', 'saturate']].forEach(([id, key]) => {
@@ -1428,6 +1626,7 @@
     bindTimeline();
     bindFacecam();
     bindWm();
+    bindCrop();
     window.addEventListener('resize', () => { layoutOverlays(); buildStripDebounced(); });
   }
 
