@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Screen Recorder — videocomeon</title>
+<meta name="description" content="브라우저에서 바로 화면 녹화. 설치 없이 사용하는 무료 스크린 레코더.">
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%23ff4d67'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<!-- ===================== HOME (Recorder) ===================== -->
+<main id="view-home" class="view active">
+  <header class="home-top">
+    <button id="btn-settings" class="icon-btn gear" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24"><path d="M19.4 13a7.9 7.9 0 0 0 .1-1 7.9 7.9 0 0 0-.1-1l2.1-1.6a.5.5 0 0 0 .1-.7l-2-3.4a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1l-.4-2.6a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 0-.5.4l-.4 2.7a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.4a.5.5 0 0 0 .1.7L4.5 11a7.9 7.9 0 0 0 0 2l-2.1 1.6a.5.5 0 0 0-.1.7l2 3.4c.1.2.4.3.6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.7c0 .2.2.4.5.4h4c.2 0 .4-.2.5-.4l.4-2.7a7.6 7.6 0 0 0 1.7-1l2.5 1c.2.1.5 0 .6-.2l2-3.4a.5.5 0 0 0-.1-.7L19.4 13zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+    </button>
+    <h1>Screen Recorder</h1>
+
+    <div class="cards">
+      <button class="card" id="card-videos">
+        <span class="card-sub">Your Recordings</span>
+        <span class="card-title">My Videos</span>
+        <span class="card-icon">
+          <svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11z"/></svg>
+        </span>
+      </button>
+      <button class="card" id="card-faq">
+        <span class="card-sub">Read me First</span>
+        <span class="card-title">FAQ</span>
+        <span class="card-icon round">
+          <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm.2 15.5a1.2 1.2 0 1 1 1.2-1.2 1.2 1.2 0 0 1-1.2 1.2zm1.8-5.4c-.8.6-1 .9-1 1.6v.4h-2v-.5a2.9 2.9 0 0 1 1.4-2.7c.8-.6 1.1-1 1.1-1.7a1.4 1.4 0 0 0-1.6-1.3 1.5 1.5 0 0 0-1.6 1.5H8.4A3.4 3.4 0 0 1 12 6.1a3.3 3.3 0 0 1 3.6 3.2c0 1.3-.6 2.1-1.6 2.8z"/></svg>
+        </span>
+      </button>
+    </div>
+
+    <button class="audio-help" id="btn-audio-help">👉 Having troubles on Recording Sound &amp; Audio?</button>
+  </header>
+
+  <section class="rec-panel">
+    <div class="rec-options">
+      <button id="btn-fps" class="pill">30 FPS</button>
+      <button id="btn-quality" class="pill">1080P</button>
+    </div>
+    <div id="rec-timer" class="rec-timer">00:00:00</div>
+    <div class="rec-controls">
+      <button id="btn-pause" class="side-btn hidden" title="Pause / Resume" aria-label="Pause or resume">
+        <svg id="ic-pause" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+        <svg id="ic-resume" class="hidden" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button id="btn-record" class="record-btn" aria-label="Start recording"><span class="record-core"></span></button>
+      <button id="btn-mic" class="side-btn mic-btn mic-on" title="Microphone on/off" aria-label="Toggle microphone">
+        <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z"/></svg>
+      </button>
+    </div>
+    <div id="rec-hint" class="rec-hint">Tap to Start</div>
+  </section>
+</main>
+
+<!-- ===================== MY VIDEOS ===================== -->
+<main id="view-videos" class="view dark">
+  <header class="bar">
+    <button id="lib-back" class="icon-btn light" aria-label="Back">
+      <svg viewBox="0 0 24 24"><path d="M15.5 4.5L8 12l7.5 7.5-1.8 1.8L4.5 12l9.2-9.3z"/></svg>
+    </button>
+    <h2>My Videos</h2>
+    <span class="bar-spacer"></span>
+  </header>
+  <div class="lib-banner">Recordings are stored only in this browser. Download important files before clearing browser data.</div>
+  <div id="lib-list" class="lib-list"></div>
+</main>
+
+<!-- ===================== PREVIEW ===================== -->
+<main id="view-preview" class="view dark">
+  <header class="bar">
+    <button id="pv-back" class="icon-btn light" aria-label="Back">
+      <svg viewBox="0 0 24 24"><path d="M15.5 4.5L8 12l7.5 7.5-1.8 1.8L4.5 12l9.2-9.3z"/></svg>
+    </button>
+    <h2>Preview</h2>
+    <button id="pv-home" class="icon-btn light" aria-label="Home">
+      <svg viewBox="0 0 24 24"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z"/></svg>
+    </button>
+  </header>
+  <div class="pv-stage"><video id="pv-video" controls playsinline></video></div>
+  <div class="pv-actions">
+    <button class="pv-action" id="pv-save"><span class="pv-circle"><svg viewBox="0 0 24 24"><path d="M11 4h2v9.2l3.6-3.6L18 11l-6 6-6-6 1.4-1.4L11 13.2zM5 19h14v2H5z"/></svg></span>SAVE</button>
+    <button class="pv-action" id="pv-share"><span class="pv-circle"><svg viewBox="0 0 24 24"><path d="M18 16a3 3 0 0 0-2.2 1L9 13.7a3 3 0 0 0 0-1.4l6.8-3.4A3 3 0 1 0 15 7a3 3 0 0 0 0 .7L8.2 11a3 3 0 1 0 0 4l6.9 3.4A3 3 0 1 0 18 16z"/></svg></span>SHARE</button>
+    <button class="pv-action" id="pv-delete"><span class="pv-circle"><svg viewBox="0 0 24 24"><path d="M9 3v1H4v2h16V4h-5V3H9zM6 8v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8H6zm3 2h2v9H9v-9zm4 0h2v9h-2v-9z"/></svg></span>DELETE</button>
+  </div>
+</main>
+
+<!-- ===================== MODALS / OVERLAYS ===================== -->
+<div id="modal-settings" class="modal hidden">
+  <div class="modal-card">
+    <h3>Settings</h3>
+    <label class="set-row">Resolution
+      <select id="set-quality">
+        <option value="auto">Auto</option>
+        <option value="720">720P</option>
+        <option value="1080" selected>1080P</option>
+      </select>
+    </label>
+    <label class="set-row">Frame rate
+      <select id="set-fps"><option value="30" selected>30 FPS</option><option value="60">60 FPS</option></select>
+    </label>
+    <label class="set-row">Countdown
+      <select id="set-countdown"><option value="0">Off</option><option value="3" selected>3 s</option><option value="5">5 s</option></select>
+    </label>
+    <label class="set-row">Microphone
+      <select id="set-mic"><option value="on" selected>On</option><option value="off">Off</option></select>
+    </label>
+    <button class="btn-pink" id="settings-close">Done</button>
+  </div>
+</div>
+
+<div id="modal-faq" class="modal hidden">
+  <div class="modal-card faq">
+    <h3>FAQ · Read me First</h3>
+    <div class="faq-body">
+      <p><b>Q. 어떻게 녹화하나요?</b><br>빨간 버튼을 누르면 브라우저가 공유할 화면(전체 화면 / 창 / 탭)을 물어봅니다. 선택하면 녹화가 시작됩니다.</p>
+      <p><b>Q. 소리(시스템 오디오)가 녹음되지 않아요.</b><br>화면 선택 창에서 <b>탭</b>을 선택하고 "탭 오디오도 공유"를 켜세요. Windows의 Chrome/Edge는 "전체 화면 + 시스템 오디오 공유"도 지원합니다. macOS에서는 탭 오디오만 캡처할 수 있습니다.</p>
+      <p><b>Q. 마이크 녹음은요?</b><br>녹화 버튼 옆 마이크 버튼(또는 설정)에서 켜고 끌 수 있습니다. 처음 사용 시 브라우저 권한을 허용해 주세요. 마이크와 시스템 오디오는 자동으로 믹싱됩니다.</p>
+      <p><b>Q. 파일은 어디에 저장되나요?</b><br>녹화본은 이 브라우저 안(IndexedDB)에만 저장됩니다. 서버로 업로드되지 않습니다. 브라우저 데이터를 삭제하면 사라지니 중요한 파일은 SAVE 버튼으로 기기에 다운로드해 두세요.</p>
+      <p><b>Q. 모바일에서 되나요?</b><br>화면 녹화(getDisplayMedia)는 데스크톱 브라우저 전용입니다. iOS/Android에서는 기기 내장 화면 녹화 기능을 사용해 주세요.</p>
+    </div>
+    <button class="btn-pink" id="faq-close">OK</button>
+  </div>
+</div>
+
+<div id="overlay-countdown" class="fullscreen-overlay hidden"><div id="countdown-num">3</div></div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="js/db.js"></script>
+<script src="js/recorder.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
