@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Screen Recorder — videocomeon</title>
-<meta name="description" content="브라우저에서 바로 화면 녹화. 설치 없이 사용하는 무료 스크린 레코더.">
+<meta name="description" content="브라우저에서 바로 화면 녹화, 컷편집, 저장까지. 설치 없이 사용하는 무료 스크린 레코더.">
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%23ff4d67'/%3E%3C/svg%3E">
 </head>
@@ -20,10 +20,10 @@
 
     <div class="cards">
       <button class="card" id="card-videos">
-        <span class="card-sub">Your Recordings</span>
-        <span class="card-title">My Videos</span>
+        <span class="card-sub">Add Audio &amp; Facecam</span>
+        <span class="card-title">Edit Clips</span>
         <span class="card-icon">
-          <svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11z"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M9 3l-1.8 2H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 5.5A4.5 4.5 0 1 1 7.5 13 4.5 4.5 0 0 1 12 8.5zm0 2A2.5 2.5 0 1 0 14.5 13 2.5 2.5 0 0 0 12 10.5z"/></svg>
         </span>
       </button>
       <button class="card" id="card-faq">
@@ -69,6 +69,83 @@
   </header>
   <div class="lib-banner">Recordings are stored only in this browser. Download important files before clearing browser data.</div>
   <div id="lib-list" class="lib-list"></div>
+  <div class="lib-tabs">
+    <button id="tab-recording" class="lib-tab active">Recording</button>
+    <button id="tab-edited" class="lib-tab">Edit File</button>
+  </div>
+</main>
+
+<!-- ===================== EDIT ===================== -->
+<main id="view-edit" class="view dark">
+  <header class="bar">
+    <button id="edit-back" class="icon-btn light" aria-label="Back">
+      <svg viewBox="0 0 24 24"><path d="M15.5 4.5L8 12l7.5 7.5-1.8 1.8L4.5 12l9.2-9.3z"/></svg>
+    </button>
+    <h2>Edit</h2>
+    <button id="edit-export" class="icon-btn light" aria-label="Export" title="Export">
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-1 5l5 5-5 5-1.4-1.4 2.6-2.6H7v-2h5.2L9.6 8.4z"/></svg>
+    </button>
+  </header>
+
+  <div class="edit-stage" id="edit-stage">
+    <canvas id="edit-canvas"></canvas>
+    <div id="facecam-box" class="facecam-box hidden">
+      <video id="facecam-video" autoplay muted playsinline></video>
+      <div id="facecam-resize" class="facecam-resize">
+        <svg viewBox="0 0 24 24"><path d="M7 17l10-10M13 7h4v4M11 17H7v-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+      </div>
+    </div>
+    <button id="edit-play" class="stage-play" aria-label="Play or pause">
+      <svg id="ic-eplay" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      <svg id="ic-epause" class="hidden" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+    </button>
+  </div>
+
+  <div class="edit-tools">
+    <button class="tool" id="tool-facecam"><svg viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm8 4a3 3 0 1 0 3 3 3 3 0 0 0-3-3zm-5 9.5a5 5 0 0 1 10 0z"/></svg><span>Facecam</span></button>
+    <button class="tool" id="tool-audio"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z"/></svg><span>Audio</span></button>
+    <button class="tool" id="tool-split"><svg viewBox="0 0 24 24"><path d="M11 3h2v18h-2zM4 6h5v12H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zm11 0h5a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-5z"/></svg><span>Split</span></button>
+    <button class="tool" id="tool-delete"><svg viewBox="0 0 24 24"><path d="M9 3v1H4v2h16V4h-5V3H9zM6 8v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8H6zm3 2h2v9H9v-9zm4 0h2v9h-2v-9z"/></svg><span>Delete</span></button>
+    <button class="tool" id="tool-speed"><svg viewBox="0 0 24 24"><path d="M12 4a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.2 4.5l1.7-1A7 7 0 1 1 19 13a6.9 6.9 0 0 1-.9 3.4l1.7 1A8.9 8.9 0 0 0 21 13a9 9 0 0 0-9-9zm3.5 4.1l-4.2 3.4a1.8 1.8 0 1 0 1.2 1.6l3.4-4.6z"/></svg><span>Speed</span></button>
+    <button class="tool" id="tool-volume"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg><span>Volume</span></button>
+    <button class="tool" id="tool-rotate"><svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg><span>Rotate</span></button>
+  </div>
+
+  <div class="edit-times"><span id="edit-t-cur">0:00.0</span><span id="edit-t-total">Total 0:00.0</span><span id="edit-t-end">0:00.0</span></div>
+
+  <div id="timeline" class="timeline">
+    <canvas id="tl-strip"></canvas>
+    <div id="tl-overlays"></div>
+    <div id="tl-playhead" class="tl-playhead"></div>
+    <div id="tl-handle-l" class="tl-handle l"><svg viewBox="0 0 24 24"><path d="M14.5 4.5L8 12l6.5 7.5 1.8-1.8L11 12l5.3-5.7z"/></svg></div>
+    <div id="tl-handle-r" class="tl-handle r"><svg viewBox="0 0 24 24"><path d="M9.5 4.5L16 12l-6.5 7.5-1.8-1.8L13 12 7.7 6.3z"/></svg></div>
+  </div>
+
+  <!-- tool sheets -->
+  <div id="sheet-speed" class="sheet hidden">
+    <div class="sheet-title">Speed</div>
+    <div class="chip-row" id="speed-chips">
+      <button class="chip" data-speed="0.5">0.5x</button>
+      <button class="chip" data-speed="0.75">0.75x</button>
+      <button class="chip active" data-speed="1">1x</button>
+      <button class="chip" data-speed="1.5">1.5x</button>
+      <button class="chip" data-speed="2">2x</button>
+    </div>
+  </div>
+  <div id="sheet-volume" class="sheet hidden">
+    <div class="sheet-title">Volume</div>
+    <label class="slider-row"><span class="slider-label">Clip</span><input type="range" id="vol-clip" min="0" max="200" value="100"><span id="vol-clip-val" class="slider-val">100%</span></label>
+    <label class="slider-row"><span class="slider-label">Music</span><input type="range" id="vol-bgm" min="0" max="200" value="60"><span id="vol-bgm-val" class="slider-val">60%</span></label>
+  </div>
+  <div id="sheet-audio" class="sheet hidden">
+    <div class="sheet-title">Background Music</div>
+    <div class="sheet-body">
+      <button id="btn-bgm-pick" class="btn-pink small">Choose file</button>
+      <span id="bgm-name" class="bgm-name">No music added</span>
+      <button id="btn-bgm-remove" class="btn-ghost small hidden">Remove</button>
+      <input type="file" id="bgm-file" accept="audio/*" class="hidden">
+    </div>
+  </div>
 </main>
 
 <!-- ===================== PREVIEW ===================== -->
@@ -86,6 +163,7 @@
   <div class="pv-actions">
     <button class="pv-action" id="pv-save"><span class="pv-circle"><svg viewBox="0 0 24 24"><path d="M11 4h2v9.2l3.6-3.6L18 11l-6 6-6-6 1.4-1.4L11 13.2zM5 19h14v2H5z"/></svg></span>SAVE</button>
     <button class="pv-action" id="pv-share"><span class="pv-circle"><svg viewBox="0 0 24 24"><path d="M18 16a3 3 0 0 0-2.2 1L9 13.7a3 3 0 0 0 0-1.4l6.8-3.4A3 3 0 1 0 15 7a3 3 0 0 0 0 .7L8.2 11a3 3 0 1 0 0 4l6.9 3.4A3 3 0 1 0 18 16z"/></svg></span>SHARE</button>
+    <button class="pv-action" id="pv-edit"><span class="pv-circle"><svg viewBox="0 0 24 24"><path d="M3 17.2V21h3.8L17.9 9.9l-3.8-3.8L3 17.2zM20.7 7.1a1 1 0 0 0 0-1.4l-2.4-2.4a1 1 0 0 0-1.4 0l-1.9 1.9 3.8 3.8 1.9-1.9z"/></svg></span>EDIT</button>
     <button class="pv-action" id="pv-delete"><span class="pv-circle"><svg viewBox="0 0 24 24"><path d="M9 3v1H4v2h16V4h-5V3H9zM6 8v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8H6zm3 2h2v9H9v-9zm4 0h2v9h-2v-9z"/></svg></span>DELETE</button>
   </div>
 </main>
@@ -121,7 +199,9 @@
       <p><b>Q. 어떻게 녹화하나요?</b><br>빨간 버튼을 누르면 브라우저가 공유할 화면(전체 화면 / 창 / 탭)을 물어봅니다. 선택하면 녹화가 시작됩니다.</p>
       <p><b>Q. 소리(시스템 오디오)가 녹음되지 않아요.</b><br>화면 선택 창에서 <b>탭</b>을 선택하고 "탭 오디오도 공유"를 켜세요. Windows의 Chrome/Edge는 "전체 화면 + 시스템 오디오 공유"도 지원합니다. macOS에서는 탭 오디오만 캡처할 수 있습니다.</p>
       <p><b>Q. 마이크 녹음은요?</b><br>녹화 버튼 옆 마이크 버튼(또는 설정)에서 켜고 끌 수 있습니다. 처음 사용 시 브라우저 권한을 허용해 주세요. 마이크와 시스템 오디오는 자동으로 믹싱됩니다.</p>
-      <p><b>Q. 파일은 어디에 저장되나요?</b><br>녹화본은 이 브라우저 안(IndexedDB)에만 저장됩니다. 서버로 업로드되지 않습니다. 브라우저 데이터를 삭제하면 사라지니 중요한 파일은 SAVE 버튼으로 기기에 다운로드해 두세요.</p>
+      <p><b>Q. 편집은 어떻게 하나요?</b><br>My Videos에서 영상의 <b>Edit</b>를 누르면 타임라인이 열립니다. 좌우 핸들로 자르기(Trim), 재생 위치에서 <b>Split</b>으로 나눈 뒤 <b>Delete</b>로 중간 구간 삭제, Speed·Volume·Rotate 조절, Facecam(웹캠 PIP)과 배경음악 추가까지 가능합니다. 우측 상단 화살표를 누르면 편집 결과가 새 파일로 저장됩니다.</p>
+      <p><b>Q. 내보내기(Export)가 오래 걸려요.</b><br>편집 결과는 브라우저 안에서 실시간으로 다시 인코딩됩니다. 편집 후 길이만큼 시간이 걸리며, 진행 중에는 탭을 백그라운드로 보내지 마세요.</p>
+      <p><b>Q. 파일은 어디에 저장되나요?</b><br>녹화·편집본은 이 브라우저 안(IndexedDB)에만 저장됩니다. 서버로 업로드되지 않습니다. 브라우저 데이터를 삭제하면 사라지니 중요한 파일은 SAVE 버튼으로 기기에 다운로드해 두세요.</p>
       <p><b>Q. 모바일에서 되나요?</b><br>화면 녹화(getDisplayMedia)는 데스크톱 브라우저 전용입니다. iOS/Android에서는 기기 내장 화면 녹화 기능을 사용해 주세요.</p>
     </div>
     <button class="btn-pink" id="faq-close">OK</button>
@@ -130,10 +210,21 @@
 
 <div id="overlay-countdown" class="fullscreen-overlay hidden"><div id="countdown-num">3</div></div>
 
+<div id="overlay-export" class="fullscreen-overlay hidden">
+  <div class="export-card">
+    <div class="export-title">Exporting…</div>
+    <div class="export-note">편집한 길이만큼 시간이 걸립니다. 탭을 닫거나 백그라운드로 보내지 마세요.</div>
+    <div class="progress"><div id="export-bar" class="progress-bar"></div></div>
+    <div id="export-pct" class="export-pct">0%</div>
+    <button id="export-cancel" class="btn-ghost">Cancel</button>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 
 <script src="js/db.js"></script>
 <script src="js/recorder.js"></script>
+<script src="js/editor.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

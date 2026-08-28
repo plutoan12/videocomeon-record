@@ -1,4 +1,5 @@
-/* App wiring: views, settings, record flow, library, preview. */
+/* App wiring: views, settings, record flow, library, preview.
+   Exposes window.App for the editor (js/editor.js). */
 (function () {
   'use strict';
 
@@ -30,7 +31,7 @@
   }
 
   /* ---------------- views ---------------- */
-  const views = ['view-home', 'view-videos', 'view-preview'];
+  const views = ['view-home', 'view-videos', 'view-edit', 'view-preview'];
   function show(viewId) {
     views.forEach((id) => $(id).classList.toggle('active', id === viewId));
     if (viewId !== 'view-preview') unloadPreview();
@@ -63,9 +64,6 @@
   }
   function extFor(mimeType) {
     return mimeType && mimeType.includes('mp4') ? 'mp4' : 'webm';
-  }
-  function waitEvent(target, name) {
-    return new Promise((res) => target.addEventListener(name, res, { once: true }));
   }
 
   /* Chrome records webm with Infinity duration; probe it via the seek hack. */
@@ -255,6 +253,7 @@
         height: result.height,
         createdAt: Date.now(),
         thumb,
+        edited: false,
       };
       item.id = await VideoDB.add(item);
       openPreview(item);
@@ -316,18 +315,23 @@
   }
 
   /* ---------------- library ---------------- */
+  let libTab = 'recording'; // 'recording' | 'edited'
+
   const ICONS = {
     save: '<svg viewBox="0 0 24 24"><path d="M11 4h2v9.2l3.6-3.6L18 11l-6 6-6-6 1.4-1.4L11 13.2zM5 19h14v2H5z"/></svg>',
-    rename: '<svg viewBox="0 0 24 24"><path d="M3 17.2V21h3.8L17.9 9.9l-3.8-3.8L3 17.2zM20.7 7.1a1 1 0 0 0 0-1.4l-2.4-2.4a1 1 0 0 0-1.4 0l-1.9 1.9 3.8 3.8 1.9-1.9z"/></svg>',
+    edit: '<svg viewBox="0 0 24 24"><path d="M3 17.2V21h3.8L17.9 9.9l-3.8-3.8L3 17.2zM20.7 7.1a1 1 0 0 0 0-1.4l-2.4-2.4a1 1 0 0 0-1.4 0l-1.9 1.9 3.8 3.8 1.9-1.9z"/></svg>',
+    rename: '<svg viewBox="0 0 24 24"><path d="M5 4h14a1 1 0 0 1 1 1v3h-2V6H6v12h12v-2h2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm7 6h9v4h-9z"/></svg>',
     del: '<svg viewBox="0 0 24 24"><path d="M9 3v1H4v2h16V4h-5V3H9zM6 8v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8H6zm3 2h2v9H9v-9zm4 0h2v9h-2v-9z"/></svg>',
   };
 
   async function renderLibrary() {
     const list = $('lib-list');
-    const items = await VideoDB.all();
+    const items = (await VideoDB.all()).filter((it) => !!it.edited === (libTab === 'edited'));
     list.innerHTML = '';
     if (!items.length) {
-      list.innerHTML = '<div class="lib-empty">아직 녹화된 영상이 없습니다.<br>홈에서 빨간 버튼을 눌러 녹화를 시작해 보세요.</div>';
+      list.innerHTML = libTab === 'edited'
+        ? '<div class="lib-empty">편집된 영상이 없습니다.<br>Recording 탭에서 영상의 Edit를 눌러 편집해 보세요.</div>'
+        : '<div class="lib-empty">아직 녹화된 영상이 없습니다.<br>홈에서 빨간 버튼을 눌러 녹화를 시작해 보세요.</div>';
       return;
     }
     for (const item of items) {
@@ -357,6 +361,7 @@
       actions.className = 'lib-actions';
       actions.append(
         libAction(ICONS.save, 'Save', () => downloadItem(item)),
+        libAction(ICONS.edit, 'Edit', () => Editor.open(item)),
         libAction(ICONS.rename, 'Rename', async () => {
           const name = prompt('새 이름을 입력하세요.', item.name);
           if (!name || name.trim() === '' || name === item.name) return;
@@ -383,6 +388,13 @@
     b.innerHTML = iconSvg + `<span>${label}</span>`;
     b.addEventListener('click', handler);
     return b;
+  }
+
+  function setLibTab(tab) {
+    libTab = tab;
+    $('tab-recording').classList.toggle('active', tab === 'recording');
+    $('tab-edited').classList.toggle('active', tab === 'edited');
+    renderLibrary();
   }
 
   /* ---------------- event wiring ---------------- */
@@ -425,12 +437,19 @@
   // library
   $('card-videos').addEventListener('click', () => { renderLibrary(); show('view-videos'); });
   $('lib-back').addEventListener('click', () => show('view-home'));
+  $('tab-recording').addEventListener('click', () => setLibTab('recording'));
+  $('tab-edited').addEventListener('click', () => setLibTab('edited'));
 
   // preview
   $('pv-back').addEventListener('click', () => { renderLibrary(); show('view-videos'); });
   $('pv-home').addEventListener('click', () => show('view-home'));
   $('pv-save').addEventListener('click', () => { if (previewItem) downloadItem(previewItem); });
   $('pv-share').addEventListener('click', () => { if (previewItem) shareItem(previewItem); });
+  $('pv-edit').addEventListener('click', () => {
+    if (!previewItem) return;
+    const item = previewItem;
+    Editor.open(item);
+  });
   $('pv-delete').addEventListener('click', async () => {
     if (!previewItem) return;
     if (!confirm(`"${previewItem.name}" 을(를) 삭제할까요?`)) return;
@@ -452,4 +471,7 @@
   if (!ScreenRecorder.isSupported()) {
     $('rec-hint').textContent = '이 브라우저는 화면 녹화를 지원하지 않습니다 (데스크톱 브라우저를 사용해 주세요)';
   }
+
+  /* API for the editor module */
+  window.App = { show, toast, openPreview, renderLibrary, probeDuration, makeThumb, fmtDur };
 })();
