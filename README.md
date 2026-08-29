@@ -34,20 +34,26 @@
 - **미리보기**: SAVE(다운로드) / SHARE(Web Share) / EDIT / DELETE
 - **My Videos 라이브러리**: Recording / Edit File 탭, 썸네일·길이 표시, Save / Edit / Rename / Delete
 - **영상 가져오기**: 기기의 영상 파일을 라이브러리로 불러와 동일하게 편집
-- **클립 이어붙이기**: 라이브러리에서 여러 클립을 순서대로 선택해 하나의 영상으로 합치기
+- **클립 이어붙이기**: 라이브러리에서 여러 클립을 순서대로 선택해 하나의 영상으로 합치기 — 같은 코덱이면 ffmpeg.wasm 스트림 카피로 재인코딩 없이 즉시(1초 미만) 병합
+- **MP4 변환**: webm 항목의 MP4 버튼으로 H.264+AAC mp4 변환 후 다운로드 (ffmpeg.wasm)
+- **Export format 설정**: Auto(브라우저 기본, 빠름) / MP4(호환성) — MP4 모드에서는 브라우저가 mp4 녹화를 지원하면 그대로, 아니면 내보내기 후 자동 변환
 
 ## 구조
 
-빌드 과정이 없는 순수 정적 사이트입니다. 외부 라이브러리/CDN 의존성이 없습니다.
+빌드 과정이 없는 순수 정적 사이트입니다. 런타임 CDN 의존성이 없습니다(ffmpeg.wasm은 저장소에 포함해 자체 호스팅).
 
 ```
 index.html      화면 구성 (홈 / 라이브러리 / 편집 / 미리보기)
 css/style.css   WeRec 스타일 핑크·다크 테마
 js/db.js        IndexedDB 저장소
+js/transcode.js ffmpeg.wasm 래퍼 (지연 로딩) — MP4 변환, 무재인코딩 병합
 js/recorder.js  녹화 엔진 (getDisplayMedia + 오디오 믹싱 + MediaRecorder)
 js/editor.js    편집기 (타임라인·컷편집·속도·볼륨·회전·크롭·화면비·필터·페이드·페이스캠·BGM·보이스오버·텍스트/스티커/워터마크·캡처·Undo/Redo·내보내기)
-js/app.js       앱 와이어링 (설정, 녹화 플로우, 라이브러리, 미리보기)
+js/app.js       앱 와이어링 (설정, 녹화 플로우, 라이브러리, 미리보기, 병합/가져오기)
+vendor/ffmpeg/  ffmpeg.wasm 0.12 (GPL, libx264 포함) — 최초 사용 시에만 ~32MB 로딩
 ```
+
+참고: `vendor/ffmpeg/`의 ffmpeg.wasm 코어는 GPL 라이선스(libx264 포함)입니다.
 
 ## 배포
 

@@ -319,6 +319,12 @@
     <label class="set-row">Microphone
       <select id="set-mic"><option value="on" selected>On</option><option value="off">Off</option></select>
     </label>
+    <label class="set-row">Export format
+      <select id="set-format">
+        <option value="auto" selected>Auto (빠름)</option>
+        <option value="mp4">MP4 (호환성)</option>
+      </select>
+    </label>
     <button class="btn-pink" id="settings-close">Done</button>
   </div>
 </div>
@@ -354,6 +360,7 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="js/db.js"></script>
+<script src="js/transcode.js"></script>
 <script src="js/recorder.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/app.js"></script>

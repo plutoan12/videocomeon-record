@@ -8,7 +8,7 @@
   /* ---------------- settings ---------------- */
   const SETTINGS_KEY = 'vcr-settings';
   const settings = Object.assign(
-    { quality: '1080', fps: 30, countdown: 3, mic: true },
+    { quality: '1080', fps: 30, countdown: 3, mic: true, format: 'auto' },
     loadSettings()
   );
 
@@ -27,6 +27,7 @@
     $('set-fps').value = String(settings.fps);
     $('set-countdown').value = String(settings.countdown);
     $('set-mic').value = settings.mic ? 'on' : 'off';
+    $('set-format').value = settings.format;
     $('btn-mic').classList.toggle('mic-on', settings.mic);
   }
 
@@ -314,6 +315,37 @@
     }
   }
 
+  /* ---------------- MP4 conversion (ffmpeg.wasm, lazy) ---------------- */
+  function setConvertProgress(p) {
+    $('export-bar').style.width = (p * 100).toFixed(1) + '%';
+    $('export-pct').textContent = Math.round(p * 100) + '%';
+  }
+
+  /* Convert a blob to H.264+AAC mp4 with the progress overlay.
+     Returns {blob, mimeType}; falls back to the original on failure. */
+  async function ensureMp4(blob) {
+    if (!blob.type || blob.type.includes('mp4')) {
+      return { blob, mimeType: blob.type || 'video/mp4' };
+    }
+    if (!window.Transcode) return { blob, mimeType: blob.type };
+    $('export-title').textContent = 'MP4로 변환 중…';
+    $('overlay-export').classList.remove('hidden');
+    setConvertProgress(0);
+    try {
+      const out = await Transcode.toMp4(blob, {
+        onProgress: setConvertProgress,
+        onStatus: (s) => { $('export-title').textContent = s; },
+      });
+      return { blob: out, mimeType: 'video/mp4' };
+    } catch (err) {
+      toast('MP4 변환에 실패해 원본 형식을 유지합니다: ' + (err && err.message ? err.message : err));
+      return { blob, mimeType: blob.type };
+    } finally {
+      $('overlay-export').classList.add('hidden');
+      $('export-title').textContent = 'Exporting…';
+    }
+  }
+
   /* ---------------- import ---------------- */
   async function importVideoFile(file) {
     if (!file.type.startsWith('video/')) {
@@ -384,6 +416,34 @@
     });
   }
 
+  async function saveMerged(blob, type, width, height, expectedDuration) {
+    if (settings.format === 'mp4' && type && !type.includes('mp4')) {
+      const conv = await ensureMp4(blob);
+      blob = conv.blob;
+      type = conv.mimeType;
+    }
+    let [duration, thumb] = await Promise.all([probeDuration(blob), makeThumb(blob)]);
+    if (!duration) duration = expectedDuration || 0;
+    const d = new Date();
+    const day = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const all = await VideoDB.all();
+    const n = all.filter((it) => it.name && it.name.startsWith(day + '-merge')).length + 1;
+    const item = {
+      name: `${day}-merge-${n}`,
+      blob,
+      mimeType: type,
+      duration,
+      width,
+      height,
+      createdAt: Date.now(),
+      thumb,
+      edited: false,
+    };
+    item.id = await VideoDB.add(item);
+    setMergeMode(false);
+    openPreview(item);
+  }
+
   async function mergeClips(ids) {
     if (mergeToken) return;
     const token = { cancel: false };
@@ -395,6 +455,32 @@
 
     const clips = [];
     try {
+      // fast path: same-codec clips concatenate without re-encoding (ffmpeg.wasm)
+      if (window.Transcode) {
+        const metaItems = (await Promise.all(ids.map((id) => VideoDB.get(id)))).filter(Boolean);
+        const types = new Set(metaItems.map((i) => i.mimeType));
+        if (metaItems.length >= 2 && types.size === 1) {
+          try {
+            const blob = await Transcode.concatCopy(
+              metaItems.map((i) => i.blob),
+              metaItems[0].mimeType,
+              {
+                onProgress: setConvertProgress,
+                onStatus: (s) => { $('export-title').textContent = s; },
+              }
+            );
+            window.App._lastMergeMethod = 'copy';
+            const expected = metaItems.reduce((a, i) => a + (i.duration || 0), 0);
+            await saveMerged(blob, blob.type, metaItems[0].width || 0, metaItems[0].height || 0, expected);
+            return;
+          } catch (err) {
+            // codecs differ in detail or the container resisted — re-encode instead
+            $('export-title').textContent = 'Merging…';
+            setConvertProgress(0);
+          }
+        }
+      }
+      window.App._lastMergeMethod = 'render';
       for (const id of ids) {
         const item = await VideoDB.get(id);
         if (item) clips.push(await loadClipVideo(item.blob));
@@ -473,26 +559,7 @@
 
       if (!token.cancel && chunks.length) {
         const type = mimeType ? mimeType.split(';')[0] : 'video/webm';
-        const blob = new Blob(chunks, { type });
-        const [duration, thumb] = await Promise.all([probeDuration(blob), makeThumb(blob)]);
-        const d = new Date();
-        const day = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-        const all = await VideoDB.all();
-        const n = all.filter((it) => it.name && it.name.startsWith(day + '-merge')).length + 1;
-        const item = {
-          name: `${day}-merge-${n}`,
-          blob,
-          mimeType: type,
-          duration,
-          width: canvas.width,
-          height: canvas.height,
-          createdAt: Date.now(),
-          thumb,
-          edited: false,
-        };
-        item.id = await VideoDB.add(item);
-        setMergeMode(false);
-        openPreview(item);
+        await saveMerged(new Blob(chunks, { type }), type, canvas.width, canvas.height, total);
       } else if (token.cancel) {
         toast('합치기를 취소했습니다.');
       }
@@ -514,6 +581,7 @@
     edit: '<svg viewBox="0 0 24 24"><path d="M3 17.2V21h3.8L17.9 9.9l-3.8-3.8L3 17.2zM20.7 7.1a1 1 0 0 0 0-1.4l-2.4-2.4a1 1 0 0 0-1.4 0l-1.9 1.9 3.8 3.8 1.9-1.9z"/></svg>',
     rename: '<svg viewBox="0 0 24 24"><path d="M5 4h14a1 1 0 0 1 1 1v3h-2V6H6v12h12v-2h2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm7 6h9v4h-9z"/></svg>',
     del: '<svg viewBox="0 0 24 24"><path d="M9 3v1H4v2h16V4h-5V3H9zM6 8v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8H6zm3 2h2v9H9v-9zm4 0h2v9h-2v-9z"/></svg>',
+    mp4: '<svg viewBox="0 0 24 24"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v12h14V6H5zm2 8.5v-5h1.5l1 2 1-2H12v5h-1.3v-2.7l-.7 1.4h-1l-.7-1.4v2.7H7zm6.2 0v-5h2a1.6 1.6 0 0 1 0 3.2h-.7v1.8h-1.3zm1.3-3h.6a.5.5 0 0 0 0-1h-.6v1z"/></svg>',
   };
 
   async function renderLibrary() {
@@ -569,6 +637,14 @@
 
       const actions = document.createElement('div');
       actions.className = 'lib-actions';
+      if (window.Transcode && item.mimeType && !item.mimeType.includes('mp4')) {
+        actions.append(libAction(ICONS.mp4, 'MP4', async () => {
+          const conv = await ensureMp4(item.blob);
+          if (conv.mimeType.includes('mp4')) {
+            downloadItem({ name: item.name, blob: conv.blob, mimeType: 'video/mp4' });
+          }
+        }));
+      }
       actions.append(
         libAction(ICONS.save, 'Save', () => downloadItem(item)),
         libAction(ICONS.edit, 'Edit', () => Editor.open(item)),
@@ -636,6 +712,7 @@
     settings.fps = parseInt($('set-fps').value, 10);
     settings.countdown = parseInt($('set-countdown').value, 10);
     settings.mic = $('set-mic').value === 'on';
+    settings.format = $('set-format').value;
     saveSettings(); syncSettingsUI();
     $('modal-settings').classList.add('hidden');
   });
@@ -702,5 +779,9 @@
   }
 
   /* API for the editor module */
-  window.App = { show, toast, openPreview, renderLibrary, probeDuration, makeThumb, fmtDur };
+  window.App = {
+    show, toast, openPreview, renderLibrary, probeDuration, makeThumb, fmtDur,
+    ensureMp4,
+    getFormat: () => settings.format,
+  };
 })();

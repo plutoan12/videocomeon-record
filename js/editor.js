@@ -1229,13 +1229,24 @@
       return;
     }
 
-    window.App.toast('저장 중…');
     const App = window.App;
-    const [duration, thumb, name] = await Promise.all([
+    if (App.getFormat() === 'mp4' && result.mimeType && !result.mimeType.includes('mp4')) {
+      const conv = await App.ensureMp4(result.blob);
+      result.blob = conv.blob;
+      result.mimeType = conv.mimeType;
+    }
+
+    window.App.toast('저장 중…');
+    const expectedDuration = editedTotal() / E.speed;
+    const sourceThumb = E.item.thumb;
+    let [duration, thumb, name] = await Promise.all([
       App.probeDuration(result.blob),
       App.makeThumb(result.blob),
       editedName(),
     ]);
+    // browsers without an H.264 decoder can't probe the transcoded mp4
+    if (!duration) duration = expectedDuration;
+    if (!thumb) thumb = sourceThumb || '';
     const newItem = {
       name,
       blob: result.blob,
