@@ -933,3 +933,14 @@ svg { width: 24px; height: 24px; fill: currentColor; display: block; }
   font-size: 12px;
   line-height: 1;
 }
+
+/* FAQ inline code chips */
+.faq-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  background: #eee;
+  color: #333;
+  padding: 1px 5px;
+  border-radius: 5px;
+  word-break: break-all;
+}
