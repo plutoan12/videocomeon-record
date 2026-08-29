@@ -139,9 +139,9 @@
     <button class="tool" id="tool-audio"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z"/></svg><span>Audio</span></button>
     <button class="tool" id="tool-voice"><svg viewBox="0 0 24 24"><path d="M9 13a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H2a7 7 0 0 0 6 6.9V20h2v-3.1A7 7 0 0 0 14 10zm4-2h2v2h2v2h-2v2h-2v-2h-2v-2h2z"/></svg><span>Voice</span></button>
     <button class="tool" id="tool-text"><svg viewBox="0 0 24 24"><path d="M4 5h16v3.5h-6.2V19h-3.6V8.5H4z"/></svg><span>Text</span></button>
-    <button class="tool" id="tool-split"><svg viewBox="0 0 24 24"><path d="M11 3h2v18h-2zM4 6h5v12H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zm11 0h5a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-5z"/></svg><span>Split</span></button>
-    <button class="tool" id="tool-delete"><svg viewBox="0 0 24 24"><path d="M9 3v1H4v2h16V4h-5V3H9zM6 8v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8H6zm3 2h2v9H9v-9zm4 0h2v9h-2v-9z"/></svg><span>Delete</span></button>
-    <button class="tool" id="tool-mute"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm12.6 1.3l-1.4 1.4 2.1 2.1-2.1 2.1 1.4 1.4 2.1-2.1 2.1 2.1 1.4-1.4-2.1-2.1 2.1-2.1-1.4-1.4-2.1 2.1-2.1-2.1z"/></svg><span>Mute</span></button>
+    <button class="tool" id="tool-split" title="Split (S)"><svg viewBox="0 0 24 24"><path d="M11 3h2v18h-2zM4 6h5v12H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zm11 0h5a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-5z"/></svg><span>Split</span></button>
+    <button class="tool" id="tool-delete" title="Delete (Del)"><svg viewBox="0 0 24 24"><path d="M9 3v1H4v2h16V4h-5V3H9zM6 8v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8H6zm3 2h2v9H9v-9zm4 0h2v9h-2v-9z"/></svg><span>Delete</span></button>
+    <button class="tool" id="tool-mute" title="Mute (M)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm12.6 1.3l-1.4 1.4 2.1 2.1-2.1 2.1 1.4 1.4 2.1-2.1 2.1 2.1 1.4-1.4-2.1-2.1 2.1-2.1-1.4-1.4-2.1 2.1-2.1-2.1z"/></svg><span>Mute</span></button>
     <button class="tool" id="tool-speed"><svg viewBox="0 0 24 24"><path d="M12 4a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.2 4.5l1.7-1A7 7 0 1 1 19 13a6.9 6.9 0 0 1-.9 3.4l1.7 1A8.9 8.9 0 0 0 21 13a9 9 0 0 0-9-9zm3.5 4.1l-4.2 3.4a1.8 1.8 0 1 0 1.2 1.6l3.4-4.6z"/></svg><span>Speed</span></button>
     <button class="tool" id="tool-volume"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg><span>Volume</span></button>
     <button class="tool" id="tool-rotate"><svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg><span>Rotate</span></button>
@@ -344,6 +344,8 @@
       • 화면 선택 창에서 "탭 / 창 / 전체 화면"을 바꿔가며 시도해 보세요 — 탭에서 검게 나오던 것이 전체 화면으로는 잘 잡히는 경우가 많습니다.<br>
       (넷플릭스 등 <b>DRM 보호 콘텐츠</b>는 이 방법으로도 캡처되지 않습니다 — 정상적인 저작권 보호입니다.)</p>
       <p><b>Q. 편집은 어떻게 하나요?</b><br>My Videos에서 영상의 <b>Edit</b>를 누르면 타임라인이 열립니다. 좌우 핸들로 자르기(Trim), 재생 위치에서 <b>Split</b>으로 나눈 뒤 <b>Delete</b>로 중간 구간 삭제, Speed·Volume·Rotate 조절, Facecam(웹캠 PIP)과 배경음악 추가까지 가능합니다. 우측 상단 화살표를 누르면 편집 결과가 새 파일로 저장됩니다.</p>
+      <p><b>Q. 편집 단축키가 있나요?</b><br><b>Space</b> 재생/일시정지 · <b>S</b> Split · <b>Del</b> 선택 구간 삭제 · <b>M</b> Mute · <b>←/→</b> 1초 이동(Shift와 함께 5초) · <b>,</b> / <b>.</b> 프레임 단위 이동 · <b>Home/End</b> 처음/끝 · <b>Ctrl+Z</b> 실행취소 · <b>Ctrl+Shift+Z</b>(또는 Ctrl+Y) 다시실행 · <b>Esc</b> 패널 닫기</p>
+      <p><b>Q. GIF나 MP3로도 저장할 수 있나요?</b><br>My Videos에서 영상의 <b>GIF</b> 버튼을 누르면 움직이는 GIF(최대 480px·12fps)로, <b>MP3</b> 버튼을 누르면 소리만 MP3 파일로 저장됩니다. GIF는 길이가 길수록 파일이 매우 커지므로, Edit에서 필요한 부분만 잘라 저장한 뒤 변환하는 것을 권장합니다.</p>
       <p><b>Q. 내보내기(Export)가 오래 걸려요.</b><br>편집 결과는 브라우저 안에서 실시간으로 다시 인코딩됩니다. 편집 후 길이만큼 시간이 걸리며, 진행 중에는 탭을 백그라운드로 보내지 마세요.</p>
       <p><b>Q. 파일은 어디에 저장되나요?</b><br>녹화·편집본은 이 브라우저 안(IndexedDB)에만 저장됩니다. 서버로 업로드되지 않습니다. 브라우저 데이터를 삭제하면 사라지니 중요한 파일은 SAVE 버튼으로 기기에 다운로드해 두세요.</p>
       <p><b>Q. 모바일에서 되나요?</b><br>화면 녹화(getDisplayMedia)는 데스크톱 브라우저 전용입니다. iOS/Android에서는 기기 내장 화면 녹화 기능을 사용해 주세요.</p>

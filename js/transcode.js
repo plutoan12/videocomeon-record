@@ -3,6 +3,8 @@
    - guaranteed MP4 output (H.264 + AAC transcode) where MediaRecorder
      cannot produce mp4 natively
    - fast, no-re-encode clip merging (stream copy concat)
+   - animated GIF conversion (two-pass palettegen/paletteuse)
+   - audio extraction to MP3 (libmp3lame)
    The ~32MB core is fetched only on first use and then HTTP-cached. */
 (function () {
   'use strict';
@@ -92,6 +94,66 @@
     }
   }
 
+  /* Convert a video blob to an animated GIF. Two ffmpeg passes: a shared
+     palette is generated first, then frames are mapped onto it — much better
+     color than the default 256-color dither. Never upscales beyond `width`. */
+  async function toGif(blob, { fps = 12, width = 480, onProgress, onStatus } = {}) {
+    const ff = await load(onStatus);
+    const inName = 'in.' + extOf(blob.type);
+    const files = [inName, 'pal.png', 'out.gif'];
+    let phase = 0; // 0 = palette pass, 1 = render pass
+    const onp = (e) => {
+      if (onProgress && isFinite(e.progress)) {
+        const p = Math.min(1, Math.max(0, e.progress));
+        onProgress(phase === 0 ? p * 0.4 : 0.4 + p * 0.6);
+      }
+    };
+    ff.on('progress', onp);
+    try {
+      if (onStatus) onStatus('GIF로 변환 중…');
+      await ff.writeFile(inName, new Uint8Array(await blob.arrayBuffer()));
+      const vf = `fps=${fps},scale='min(${width}\\,iw)':-1:flags=lanczos`;
+      await ff.exec(['-i', inName, '-vf', vf + ',palettegen=stats_mode=diff', 'pal.png']);
+      phase = 1;
+      await ff.exec([
+        '-i', inName, '-i', 'pal.png',
+        '-lavfi', vf + '[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle',
+        'out.gif',
+      ]);
+      const data = await ff.readFile('out.gif');
+      if (!data || !data.length) throw new Error('empty output');
+      if (onProgress) onProgress(1);
+      return new Blob([data.buffer], { type: 'image/gif' });
+    } finally {
+      ff.off('progress', onp);
+      await cleanupFiles(ff, files);
+    }
+  }
+
+  /* Extract the audio track to MP3. Throws when the source has no audio. */
+  async function toMp3(blob, { onProgress, onStatus } = {}) {
+    const ff = await load(onStatus);
+    const inName = 'in.' + extOf(blob.type);
+    const files = [inName, 'out.mp3'];
+    const onp = (e) => {
+      if (onProgress && isFinite(e.progress)) {
+        onProgress(Math.min(1, Math.max(0, e.progress)));
+      }
+    };
+    ff.on('progress', onp);
+    try {
+      if (onStatus) onStatus('MP3 추출 중…');
+      await ff.writeFile(inName, new Uint8Array(await blob.arrayBuffer()));
+      await ff.exec(['-i', inName, '-vn', '-c:a', 'libmp3lame', '-b:a', '192k', 'out.mp3']);
+      const data = await ff.readFile('out.mp3');
+      if (!data || !data.length) throw new Error('empty output');
+      return new Blob([data.buffer], { type: 'audio/mpeg' });
+    } finally {
+      ff.off('progress', onp);
+      await cleanupFiles(ff, files);
+    }
+  }
+
   /* Merge same-codec clips without re-encoding (stream copy). Returns the
      merged blob, or throws — caller falls back to the realtime renderer.
      webm inputs are first remuxed (still stream copy) so the concat demuxer
@@ -124,5 +186,5 @@
     }
   }
 
-  window.Transcode = { load, toMp4, concatCopy, isLoaded: () => !!ffmpeg };
+  window.Transcode = { load, toMp4, toGif, toMp3, concatCopy, isLoaded: () => !!ffmpeg };
 })();

@@ -1487,6 +1487,52 @@
     }, 'image/png');
   }
 
+  /* ---------------- keyboard shortcuts ---------------- */
+  function seekAbs(t) {
+    const v = E.video;
+    if (!v || !E.duration) return;
+    pause();
+    v.currentTime = clamp(t, 0, Math.max(0, E.duration - 0.01));
+    const i = segmentAt(v.currentTime);
+    if (i !== -1 && i !== E.sel) { E.sel = i; renderTimeline(); }
+    positionPlayhead();
+  }
+
+  function seekBy(delta) {
+    if (E.video) seekAbs(E.video.currentTime + delta);
+  }
+
+  function onKeydown(e) {
+    if (!$('view-edit').classList.contains('active') || !E.video || E.exporting) return;
+    if (document.querySelector('.modal:not(.hidden)')) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
+      // typing in a field never triggers shortcuts, but Escape still closes the panel
+      if (e.key === 'Escape') { t.blur(); closeSheets(); }
+      return;
+    }
+
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    if (mod && key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+    if (mod || e.altKey) return;
+
+    switch (e.key) {
+      case ' ': e.preventDefault(); togglePlay(); break;
+      case 's': case 'S': e.preventDefault(); split(); break;
+      case 'm': case 'M': e.preventDefault(); toggleMuteSel(); break;
+      case 'Delete': case 'Backspace': e.preventDefault(); deleteSel(); break;
+      case 'ArrowLeft': e.preventDefault(); seekBy(e.shiftKey ? -5 : -1); break;
+      case 'ArrowRight': e.preventDefault(); seekBy(e.shiftKey ? 5 : 1); break;
+      case ',': e.preventDefault(); seekBy(-1 / 30); break;
+      case '.': e.preventDefault(); seekBy(1 / 30); break;
+      case 'Home': e.preventDefault(); seekAbs(0); break;
+      case 'End': e.preventDefault(); seekAbs(E.duration); break;
+      case 'Escape': e.preventDefault(); closeSheets(); break;
+    }
+  }
+
   /* ---------------- wiring ---------------- */
   let bound = false;
   function bind() {
@@ -1648,6 +1694,8 @@
     $('export-cancel').addEventListener('click', () => {
       if (E.exporting) E.exporting.cancel = true;
     });
+
+    document.addEventListener('keydown', onKeydown);
 
     bindTimeline();
     bindFacecam();
