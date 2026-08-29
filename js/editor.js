@@ -1,7 +1,9 @@
 /* Video editor: timeline with trim/split/delete segments, speed, volume,
    rotate, facecam (webcam PIP), background music, voice-over narration,
-   text/watermark overlays and undo. Export re-encodes the edited result in
-   real time via canvas.captureStream + MediaRecorder.
+   text/watermark overlays and undo. Export prefers the WebCodecs +
+   mediabunny path (faster than realtime, direct mp4); the realtime
+   canvas.captureStream + MediaRecorder path remains as the fallback and
+   handles facecam / speed changes.
    Depends on window.App (app.js) for shared helpers, resolved lazily. */
 (function () {
   'use strict';
@@ -333,9 +335,11 @@
     if (tmpC.height !== h) tmpC.height = h;
   }
 
-  /* draw the base picture (rotation, filter, crop, aspect padding) */
-  function drawBase(ctx, canvas, v) {
-    const vw = v.videoWidth, vh = v.videoHeight;
+  /* draw the base picture (rotation, filter, crop, aspect padding).
+     src is any CanvasImageSource: the preview <video> or a decoded canvas
+     frame from the WebCodecs export path. */
+  function drawBase(ctx, canvas, src) {
+    const vw = src.videoWidth || src.width, vh = src.videoHeight || src.height;
     if (!vw) return;
     const d = outputDims();
     ensureTmp(d.rotW, d.rotH);
@@ -345,7 +349,7 @@
     tmpCtx.fillRect(0, 0, d.rotW, d.rotH);
     tmpCtx.translate(d.rotW / 2, d.rotH / 2);
     tmpCtx.rotate((E.rotate * Math.PI) / 180);
-    tmpCtx.drawImage(v, -vw / 2, -vh / 2, vw, vh);
+    tmpCtx.drawImage(src, -vw / 2, -vh / 2, vw, vh);
     tmpCtx.restore();
 
     if (E.cropMode) { // crop editing shows the full uncropped frame
@@ -1205,6 +1209,170 @@
     updateLabels();
   }
 
+  /* ---------------- fast export (WebCodecs + mediabunny) ----------------
+     Decodes source frames sequentially (mediabunny CanvasSink), composites
+     through the same drawExportFrame pipeline, encodes with the hardware
+     VideoEncoder and muxes to mp4 — as fast as the machine allows instead
+     of realtime. Audio is rendered on the logical timeline with an
+     OfflineAudioContext, so it cannot drift. Not eligible when:
+     - facecam is on (a live webcam can't follow a faster-than-realtime loop)
+     - speed != 1 (AudioBufferSource playbackRate would shift pitch, unlike
+       the realtime path's pitch-preserving video.playbackRate)
+     Any failure falls back to the realtime MediaRecorder path. */
+  let mbPromise = null;
+  function loadMediabunny() {
+    if (!mbPromise) {
+      mbPromise = import('../vendor/mediabunny/mediabunny.min.mjs')
+        .catch((err) => { mbPromise = null; throw err; });
+    }
+    return mbPromise;
+  }
+
+  function fastExportEligible() {
+    return !E.facecam.enabled && E.speed === 1
+      && typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
+  }
+
+  /* source time for an output-timeline position (speed 1) */
+  function srcTimeAt(outT) {
+    let acc = 0;
+    for (const seg of E.segments) {
+      const len = seg.end - seg.start;
+      if (outT < acc + len) return seg.start + (outT - acc);
+      acc += len;
+    }
+    const last = E.segments[E.segments.length - 1];
+    return last ? Math.max(last.start, last.end - 0.01) : 0;
+  }
+
+  /* mix clip audio + BGM + narration with mutes and fades on the logical
+     output timeline; returns the rendered AudioBuffer */
+  async function renderOfflineAudio(totalOut) {
+    const rate = 48000;
+    const actx = new OfflineAudioContext(2, Math.max(1, Math.ceil(totalOut * rate)), rate);
+    const master = actx.createGain();
+    master.connect(actx.destination);
+    const g = master.gain;
+    if (E.fadeIn > 0) {
+      g.setValueAtTime(0, 0);
+      g.linearRampToValueAtTime(1, Math.min(E.fadeIn, totalOut));
+    }
+    if (E.fadeOut > 0 && totalOut > E.fadeOut) {
+      g.setValueAtTime(1, totalOut - E.fadeOut);
+      g.linearRampToValueAtTime(0, totalOut);
+    }
+    const decode = async (blob) => {
+      try { return await actx.decodeAudioData(await blob.arrayBuffer()); }
+      catch (err) { return null; } // no audio track / undecodable
+    };
+    const wire = (buf, gain) => {
+      const src = actx.createBufferSource();
+      src.buffer = buf;
+      const gn = actx.createGain();
+      gn.gain.value = gain;
+      src.connect(gn).connect(master);
+      return src;
+    };
+    const clipBuf = E.volume > 0 ? await decode(E.item.blob) : null;
+    if (clipBuf) {
+      let at = 0;
+      for (const seg of E.segments) {
+        const len = seg.end - seg.start;
+        if (!seg.muted) wire(clipBuf, E.volume).start(at, seg.start, len);
+        at += len;
+      }
+    }
+    if (E.bgm && E.bgmVolume > 0) {
+      const buf = await decode(E.bgm);
+      if (buf) {
+        const src = wire(buf, E.bgmVolume);
+        src.loop = true;
+        src.start(0);
+        src.stop(totalOut);
+      }
+    }
+    if (E.voiceVolume > 0) {
+      for (const vc of E.voices) {
+        if (vc.startOut >= totalOut) continue;
+        const buf = await decode(vc.blob);
+        if (buf) wire(buf, E.voiceVolume).start(vc.startOut);
+      }
+    }
+    return actx.startRendering();
+  }
+
+  async function renderExportFast(token, onProgress) {
+    const MB = await loadMediabunny();
+
+    const input = new MB.Input({ formats: MB.ALL_FORMATS, source: new MB.BlobSource(E.item.blob) });
+    const track = await input.getPrimaryVideoTrack();
+    if (!track || !(await track.canDecode())) throw new Error('source not decodable via WebCodecs');
+
+    const dims = outputDims();
+    const format = new MB.Mp4OutputFormat();
+    const videoCodec = await MB.getFirstEncodableVideoCodec(
+      format.getSupportedVideoCodecs(), { width: dims.W, height: dims.H });
+    const audioCodec = await MB.getFirstEncodableAudioCodec(
+      format.getSupportedAudioCodecs(), { numberOfChannels: 2, sampleRate: 48000 });
+    if (!videoCodec || !audioCodec) throw new Error('no encodable codec');
+
+    const fps = 30;
+    const totalOut = Math.max(0.001, editedTotal() / E.speed);
+    const totalFrames = Math.max(1, Math.round(totalOut * fps));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = dims.W;
+    canvas.height = dims.H;
+    const ctx = canvas.getContext('2d');
+
+    const output = new MB.Output({ format, target: new MB.BufferTarget() });
+    const videoSource = new MB.CanvasSource(canvas, { codec: videoCodec, bitrate: 8_000_000 });
+    output.addVideoTrack(videoSource);
+    const audioSource = new MB.AudioBufferSource({ codec: audioCodec, bitrate: 192_000 });
+    output.addAudioTrack(audioSource);
+    await output.start();
+
+    try {
+      await audioSource.add(await renderOfflineAudio(totalOut));
+      audioSource.close();
+
+      const srcTimes = [];
+      for (let f = 0; f < totalFrames; f++) srcTimes.push(srcTimeAt(f / fps));
+
+      const sink = new MB.CanvasSink(track, { poolSize: 2 });
+      let f = 0;
+      let lastFrame = null;
+      for await (const wrapped of sink.canvasesAtTimestamps(srcTimes)) {
+        if (token.cancel) break;
+        if (wrapped) lastFrame = wrapped.canvas;
+        drawExportFrame(ctx, canvas, lastFrame || { width: 0 }, null, srcTimes[f]);
+        await videoSource.add(f / fps, 1 / fps); // applies encoder backpressure
+        f += 1;
+        if (f % 5 === 0) await new Promise((res) => setTimeout(res)); // yield to the UI
+        onProgress(f / totalFrames);
+      }
+      videoSource.close();
+
+      if (token.cancel) {
+        await output.cancel();
+        return null;
+      }
+      await output.finalize();
+    } catch (err) {
+      try { await output.cancel(); } catch (e) { /* already errored */ }
+      throw err;
+    }
+
+    const buffer = output.target.buffer;
+    if (!buffer || !buffer.byteLength) throw new Error('empty output');
+    return {
+      blob: new Blob([buffer], { type: 'video/mp4' }),
+      mimeType: 'video/mp4',
+      width: dims.W,
+      height: dims.H,
+    };
+  }
+
   /* ---------------- export ---------------- */
   async function doExport() {
     if (E.exporting) return;
@@ -1217,7 +1385,22 @@
 
     let result = null;
     try {
-      result = await renderExport(token, setProgress);
+      if (fastExportEligible()) {
+        try {
+          $('export-title').textContent = '빠른 내보내기 중… (WebCodecs)';
+          result = await renderExportFast(token, setProgress);
+          E.lastExportMethod = 'webcodecs';
+        } catch (err) {
+          // e.g. Firefox without an encoder, or an undecodable source
+          console.warn('fast export unavailable, falling back to realtime:', err);
+          setProgress(0);
+        }
+        $('export-title').textContent = 'Exporting…';
+      }
+      if (!result && !token.cancel) {
+        result = await renderExport(token, setProgress);
+        E.lastExportMethod = 'realtime';
+      }
     } catch (err) {
       window.App.toast('내보내기 실패: ' + (err && err.message ? err.message : err));
     }
@@ -1362,7 +1545,7 @@
     let pumping = true;
     const pump = () => {
       if (!pumping) return;
-      drawExportFrame(ctx, canvas, v, camV);
+      drawExportFrame(ctx, canvas, v, camV, v.currentTime);
       requestAnimationFrame(pump);
     };
     requestAnimationFrame(pump);
@@ -1415,10 +1598,11 @@
     };
   }
 
-  function drawExportFrame(ctx, canvas, v, camV) {
+  /* srcTime: the SOURCE-timeline position of this frame (drives the fade) */
+  function drawExportFrame(ctx, canvas, src, camV, srcTime) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    if (v.videoWidth) drawBase(ctx, canvas, v);
+    if (src.videoWidth || src.width) drawBase(ctx, canvas, src);
     if (camV && camV.videoWidth) {
       const w = E.facecam.w * canvas.width;
       const h = w / E.facecam.aspect;
@@ -1453,7 +1637,7 @@
       ctx.restore();
     }
     // fade covers the whole composited frame, overlays included
-    const f = fadeFactor(computeOutT(v.currentTime));
+    const f = fadeFactor(computeOutT(srcTime));
     if (f < 1) {
       ctx.fillStyle = `rgba(0,0,0,${(1 - f).toFixed(3)})`;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1472,7 +1656,7 @@
     c.width = d.W;
     c.height = d.H;
     const camV = E.facecam.enabled ? $('facecam-video') : null;
-    drawExportFrame(c.getContext('2d'), c, E.video, camV);
+    drawExportFrame(c.getContext('2d'), c, E.video, camV, E.video.currentTime);
     c.toBlob((blob) => {
       if (!blob) { window.App.toast('캡처에 실패했습니다.'); return; }
       const url = URL.createObjectURL(blob);
@@ -1714,5 +1898,5 @@
   document.addEventListener('DOMContentLoaded', bind);
   if (document.readyState !== 'loading') bind();
 
-  window.Editor = { open };
+  window.Editor = { open, lastExportMethod: () => E.lastExportMethod || '' };
 })();
