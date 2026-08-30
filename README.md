@@ -1,5 +1,7 @@
 # Screen Recorder for videocomeon.com
 
+> **⚠️ 이 저장소는 아카이브되었습니다.** 소스가 [plutoan12/videocomeon-local](https://github.com/plutoan12/videocomeon-local)의 `apps/web/public/record/`로 이관되어 그곳에서 유지보수됩니다. 이슈·수정은 videocomeon-local에 올려 주세요.
+
 브라우저에서 바로 사용하는 화면 녹화 + 컷편집기입니다. 설치·회원가입·업로드 없이 동작하며, 녹화·편집본은 사용자의 브라우저(IndexedDB) 안에만 저장됩니다.
 
 ## 기능
