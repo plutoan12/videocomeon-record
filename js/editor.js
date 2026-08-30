@@ -1341,13 +1341,8 @@
      the clip audio with pitch preserved (WSOLA), matching the realtime
      path's pitch-preserving video.playbackRate.
      Any failure falls back to the realtime MediaRecorder path. */
-  let mbPromise = null;
   function loadMediabunny() {
-    if (!mbPromise) {
-      mbPromise = import('../vendor/mediabunny/mediabunny.min.mjs')
-        .catch((err) => { mbPromise = null; throw err; });
-    }
-    return mbPromise;
+    return window.MBMedia.load();
   }
 
   function fastExportEligible() {

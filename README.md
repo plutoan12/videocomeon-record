@@ -35,8 +35,8 @@
 - **미리보기**: SAVE(다운로드) / SHARE(Web Share) / EDIT / DELETE
 - **My Videos 라이브러리**: Recording / Edit File 탭, 썸네일·길이 표시, Save / Edit / Rename / Delete
 - **영상 가져오기**: 기기의 영상 파일을 라이브러리로 불러와 동일하게 편집
-- **클립 이어붙이기**: 라이브러리에서 여러 클립을 순서대로 선택해 하나의 영상으로 합치기 — 같은 코덱이면 ffmpeg.wasm 스트림 카피로 재인코딩 없이 즉시(1초 미만) 병합
-- **MP4 변환**: webm 항목의 MP4 버튼으로 H.264+AAC mp4 변환 후 다운로드 (ffmpeg.wasm)
+- **클립 이어붙이기**: 라이브러리에서 여러 클립을 순서대로 선택해 하나의 영상으로 합치기 — 같은 코덱이면 mediabunny 패킷 복사로 재인코딩 없이 즉시(1초 미만) 병합 (실패 시 ffmpeg.wasm 스트림 카피 → 실시간 재인코딩 순 폴백)
+- **MP4 변환**: webm 항목의 MP4 버튼으로 H.264+AAC mp4 변환 후 다운로드 — mediabunny(WebCodecs 하드웨어 인코딩, 엔진 다운로드 없음) 우선, WebCodecs 미지원 시 ffmpeg.wasm 폴백
 - **GIF 변환**: GIF 버튼으로 움직이는 GIF 저장 (최대 480px·12fps, 2-pass 팔레트로 색 품질 확보)
 - **MP3 추출**: MP3 버튼으로 영상의 소리만 MP3(192kbps)로 저장
 - **Export format 설정**: Auto(브라우저 기본, 빠름) / MP4(호환성) — MP4 모드에서는 브라우저가 mp4 녹화를 지원하면 그대로, 아니면 내보내기 후 자동 변환
@@ -49,12 +49,13 @@
 index.html      화면 구성 (홈 / 라이브러리 / 편집 / 미리보기)
 css/style.css   WeRec 스타일 핑크·다크 테마
 js/db.js        IndexedDB 저장소
-js/transcode.js ffmpeg.wasm 래퍼 (지연 로딩) — MP4 변환, 무재인코딩 병합, GIF 변환, MP3 추출
+js/mbmedia.js   mediabunny 래퍼 (지연 로딩) — MP4 변환(WebCodecs), 무재인코딩 병합(패킷 복사), 편집기 빠른 내보내기 로더
+js/transcode.js ffmpeg.wasm 래퍼 (지연 로딩) — GIF 변환, MP3 추출, MP4 변환·병합 폴백
 js/recorder.js  녹화 엔진 (getDisplayMedia + 오디오 믹싱 + MediaRecorder)
 js/editor.js    편집기 (타임라인·컷편집·속도·볼륨·회전·크롭·화면비·필터·페이드·페이스캠·BGM·보이스오버·텍스트/스티커/워터마크·캡처·Undo/Redo·내보내기: WebCodecs 우선 + 실시간 폴백)
 js/app.js       앱 와이어링 (설정, 녹화 플로우, 라이브러리, 미리보기, 병합/가져오기)
-vendor/mediabunny/ mediabunny 1.55 (~660KB, 순수 JS) — WebCodecs 내보내기의 디먹싱·mp4 먹싱, 최초 내보내기 시에만 로딩
-vendor/ffmpeg/  ffmpeg.wasm 0.12 (GPL, libx264 포함) — MP4 변환·병합·GIF·MP3용, 최초 사용 시에만 ~32MB 로딩
+vendor/mediabunny/ mediabunny 1.55 (~660KB, 순수 JS) — 디먹싱·먹싱·WebCodecs 인코딩, 최초 사용 시에만 로딩
+vendor/ffmpeg/  ffmpeg.wasm 0.12 (GPL, libx264 포함) — GIF·MP3 및 폴백용, 최초 사용 시에만 ~32MB 로딩
 ```
 
 참고: `vendor/ffmpeg/`의 ffmpeg.wasm 코어는 GPL 라이선스(libx264 포함), `vendor/mediabunny/`는 MPL-2.0 라이선스입니다.

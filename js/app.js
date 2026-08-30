@@ -326,16 +326,28 @@
   }
 
   /* Convert a blob to H.264+AAC mp4 with the progress overlay.
+     mediabunny (WebCodecs, no 32MB engine download) is tried first;
+     ffmpeg.wasm remains the fallback for browsers without WebCodecs.
      Returns {blob, mimeType}; falls back to the original on failure. */
   async function ensureMp4(blob) {
     if (!blob.type || blob.type.includes('mp4')) {
       return { blob, mimeType: blob.type || 'video/mp4' };
     }
-    if (!window.Transcode) return { blob, mimeType: blob.type };
+    if (!window.MBMedia && !window.Transcode) return { blob, mimeType: blob.type };
     $('export-title').textContent = 'MP4로 변환 중…';
     $('overlay-export').classList.remove('hidden');
     setConvertProgress(0);
     try {
+      if (window.MBMedia && MBMedia.canEncodeMp4()) {
+        try {
+          const out = await MBMedia.toMp4(blob, { onProgress: setConvertProgress });
+          return { blob: out, mimeType: 'video/mp4' };
+        } catch (err) {
+          console.warn('mediabunny mp4 conversion failed, falling back to ffmpeg:', err);
+          setConvertProgress(0);
+        }
+      }
+      if (!window.Transcode) throw new Error('WebCodecs 미지원');
       const out = await Transcode.toMp4(blob, {
         onProgress: setConvertProgress,
         onStatus: (s) => { $('export-title').textContent = s; },
@@ -502,11 +514,30 @@
 
     const clips = [];
     try {
-      // fast path: same-codec clips concatenate without re-encoding (ffmpeg.wasm)
-      if (window.Transcode) {
-        const metaItems = (await Promise.all(ids.map((id) => VideoDB.get(id)))).filter(Boolean);
-        const types = new Set(metaItems.map((i) => i.mimeType));
-        if (metaItems.length >= 2 && types.size === 1) {
+      // fast path: same-codec clips concatenate without re-encoding —
+      // mediabunny packet copy first (pure JS), then ffmpeg stream copy
+      const metaItems = (await Promise.all(ids.map((id) => VideoDB.get(id)))).filter(Boolean);
+      const types = new Set(metaItems.map((i) => i.mimeType));
+      if (metaItems.length >= 2 && types.size === 1) {
+        const expected = metaItems.reduce((a, i) => a + (i.duration || 0), 0);
+        if (window.MBMedia) {
+          try {
+            $('export-title').textContent = '클립 합치는 중… (재인코딩 없음)';
+            const blob = await MBMedia.concat(
+              metaItems.map((i) => i.blob),
+              metaItems[0].mimeType,
+              { onProgress: setConvertProgress }
+            );
+            window.App._lastMergeMethod = 'mb-copy';
+            await saveMerged(blob, blob.type, metaItems[0].width || 0, metaItems[0].height || 0, expected);
+            return;
+          } catch (err) {
+            console.warn('mediabunny merge failed, trying ffmpeg:', err);
+            $('export-title').textContent = 'Merging…';
+            setConvertProgress(0);
+          }
+        }
+        if (window.Transcode) {
           try {
             const blob = await Transcode.concatCopy(
               metaItems.map((i) => i.blob),
@@ -517,7 +548,6 @@
               }
             );
             window.App._lastMergeMethod = 'copy';
-            const expected = metaItems.reduce((a, i) => a + (i.duration || 0), 0);
             await saveMerged(blob, blob.type, metaItems[0].width || 0, metaItems[0].height || 0, expected);
             return;
           } catch (err) {
@@ -686,7 +716,7 @@
 
       const actions = document.createElement('div');
       actions.className = 'lib-actions';
-      if (window.Transcode && item.mimeType && !item.mimeType.includes('mp4')) {
+      if ((window.MBMedia || window.Transcode) && item.mimeType && !item.mimeType.includes('mp4')) {
         actions.append(libAction(ICONS.mp4, 'MP4', async () => {
           const conv = await ensureMp4(item.blob);
           if (conv.mimeType.includes('mp4')) {
