@@ -3,7 +3,7 @@
    voice-over narration, text/watermark overlays and undo. Export prefers
    the WebCodecs + mediabunny path (faster than realtime, direct mp4); the
    realtime canvas.captureStream + MediaRecorder path remains as the
-   fallback and handles speed changes and browsers without WebCodecs.
+   fallback for browsers without WebCodecs.
    Depends on window.App (app.js) for shared helpers, resolved lazily. */
 (function () {
   'use strict';
@@ -1337,9 +1337,9 @@
      VideoEncoder and muxes to mp4 — as fast as the machine allows instead
      of realtime. Audio is rendered on the logical timeline with an
      OfflineAudioContext, so it cannot drift. Facecam clips are pre-recorded
-     in the editor and decoded here like the source. Not eligible when
-     speed != 1 (AudioBufferSource playbackRate would shift pitch, unlike
-     the realtime path's pitch-preserving video.playbackRate).
+     in the editor and decoded here like the source. Speed changes stretch
+     the clip audio with pitch preserved (WSOLA), matching the realtime
+     path's pitch-preserving video.playbackRate.
      Any failure falls back to the realtime MediaRecorder path. */
   let mbPromise = null;
   function loadMediabunny() {
@@ -1351,20 +1351,83 @@
   }
 
   function fastExportEligible() {
-    return E.speed === 1
-      && typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
+    return typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
   }
 
-  /* source time for an output-timeline position (speed 1) */
+  /* source time for an output-timeline position */
   function srcTimeAt(outT) {
+    const edited = outT * E.speed;
     let acc = 0;
     for (const seg of E.segments) {
       const len = seg.end - seg.start;
-      if (outT < acc + len) return seg.start + (outT - acc);
+      if (edited < acc + len) return seg.start + (edited - acc);
       acc += len;
     }
     const last = E.segments[E.segments.length - 1];
     return last ? Math.max(last.start, last.end - 0.01) : 0;
+  }
+
+  /* WSOLA time-stretch: consumes input at `factor`× per output sample while
+     preserving pitch — the offline equivalent of the realtime path's
+     pitch-preserving video.playbackRate. Windows of the input are re-laid
+     on the output grid, each aligned by cross-correlation against the
+     natural continuation of the previous window, then Hann overlap-added. */
+  function timeStretchPreservePitch(buf, factor, outLength) {
+    const rate = buf.sampleRate;
+    const chs = buf.numberOfChannels;
+    const win = Math.round(rate * 0.05);      // 50ms analysis window
+    const hop = win >> 1;                     // 50% overlap: Hann sums flat
+    const seek = Math.round(rate * 0.012);    // ±12ms alignment search
+    const corrLen = Math.round(rate * 0.01);  // 10ms correlation span
+    const inLen = buf.length;
+    if (inLen < win) return buf;
+
+    const chData = [];
+    for (let c = 0; c < chs; c++) chData.push(buf.getChannelData(c));
+    const mono = new Float32Array(inLen); // correlation guide
+    for (let c = 0; c < chs; c++) {
+      const d = chData[c];
+      for (let i = 0; i < inLen; i++) mono[i] += d[i] / chs;
+    }
+    const hann = new Float32Array(win);
+    for (let i = 0; i < win; i++) hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / win);
+
+    const out = [];
+    for (let c = 0; c < chs; c++) out.push(new Float32Array(outLength));
+    const wsum = new Float32Array(outLength); // normalizes partial edge windows
+
+    let prevIn = -1;
+    for (let op = 0; op < outLength; op += hop) {
+      let ip = Math.round(op * factor);
+      let bestD = 0;
+      const target = prevIn + hop;
+      if (prevIn >= 0 && target + corrLen <= inLen) {
+        let bestScore = -Infinity;
+        for (let d = -seek; d <= seek; d += 4) {
+          const cand = ip + d;
+          if (cand < 0 || cand + win > inLen) continue;
+          let s = 0;
+          for (let i = 0; i < corrLen; i += 4) s += mono[cand + i] * mono[target + i];
+          if (s > bestScore) { bestScore = s; bestD = d; }
+        }
+      }
+      ip = Math.max(0, Math.min(inLen - win, ip + bestD));
+      prevIn = ip;
+      const n = Math.min(win, outLength - op);
+      for (let c = 0; c < chs; c++) {
+        const src = chData[c], dst = out[c];
+        for (let i = 0; i < n; i++) dst[op + i] += src[ip + i] * hann[i];
+      }
+      for (let i = 0; i < n; i++) wsum[op + i] += hann[i];
+    }
+
+    const res = new AudioBuffer({ numberOfChannels: chs, length: outLength, sampleRate: rate });
+    for (let c = 0; c < chs; c++) {
+      const dst = out[c];
+      for (let i = 0; i < outLength; i++) if (wsum[i] > 1e-4) dst[i] /= wsum[i];
+      res.copyToChannel(dst, c);
+    }
+    return res;
   }
 
   /* mix clip audio + BGM + narration with mutes and fades on the logical
@@ -1395,14 +1458,31 @@
       src.connect(gn).connect(master);
       return src;
     };
-    const clipBuf = E.volume > 0 ? await decode(E.item.blob) : null;
-    if (clipBuf) {
+    // clip audio: mixed on the EDITED timeline first (cuts + per-segment
+    // mutes at 1×), then time-stretched to the output length with pitch
+    // preserved — matching the realtime path's playbackRate semantics.
+    // BGM and narration below stay on the output timeline at normal speed.
+    const srcBuf = E.volume > 0 ? await decode(E.item.blob) : null;
+    if (srcBuf) {
+      const editedLen = Math.max(0.001, editedTotal());
+      const cctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(editedLen * rate)), rate);
       let at = 0;
       for (const seg of E.segments) {
         const len = seg.end - seg.start;
-        if (!seg.muted) wire(clipBuf, E.volume).start(at, seg.start, len);
+        if (!seg.muted) {
+          const s = cctx.createBufferSource();
+          s.buffer = srcBuf;
+          const gn = cctx.createGain();
+          gn.gain.value = E.volume;
+          s.connect(gn).connect(cctx.destination);
+          s.start(at, seg.start, len);
+        }
         at += len;
       }
+      const clipMix = await cctx.startRendering();
+      const stretched = E.speed === 1 ? clipMix
+        : timeStretchPreservePitch(clipMix, E.speed, actx.length);
+      wire(stretched, 1).start(0);
     }
     if (E.bgm && E.bgmVolume > 0) {
       const buf = await decode(E.bgm);
