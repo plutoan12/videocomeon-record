@@ -118,7 +118,7 @@
       </div>
     </div>
     <div id="facecam-box" class="facecam-box hidden">
-      <video id="facecam-video" autoplay muted playsinline></video>
+      <video id="facecam-video" muted playsinline></video>
       <div id="facecam-resize" class="facecam-resize">
         <svg viewBox="0 0 24 24"><path d="M7 17l10-10M13 7h4v4M11 17H7v-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
       </div>
@@ -194,6 +194,14 @@
     <div class="sheet-body">
       <button id="btn-voice-rec" class="btn-pink small">● 녹음 시작</button>
       <div id="voice-list" class="voice-list"></div>
+    </div>
+  </div>
+  <div id="sheet-facecam" class="sheet hidden">
+    <div class="sheet-title">Facecam</div>
+    <div class="sheet-note">녹화를 시작하면 현재 위치부터 영상이 재생되며 웹캠 리액션이 함께 녹화됩니다. 녹화된 클립은 화면 위 박스로 표시됩니다 — 드래그로 이동, 모서리로 크기 조절.<br><b>권장 순서:</b> 컷편집(Trim/Split/Delete)과 Speed를 먼저 정한 뒤 촬영하세요. 촬영 후 컷·속도를 바꾸면 페이스캠 위치가 어긋날 수 있습니다.</div>
+    <div class="sheet-body">
+      <button id="btn-cam-rec" class="btn-pink small">● 녹화 시작</button>
+      <div id="cam-list" class="voice-list"></div>
     </div>
   </div>
   <div id="sheet-text" class="sheet hidden">
@@ -346,7 +354,7 @@
       <p><b>Q. 편집은 어떻게 하나요?</b><br>My Videos에서 영상의 <b>Edit</b>를 누르면 타임라인이 열립니다. 좌우 핸들로 자르기(Trim), 재생 위치에서 <b>Split</b>으로 나눈 뒤 <b>Delete</b>로 중간 구간 삭제, Speed·Volume·Rotate 조절, Facecam(웹캠 PIP)과 배경음악 추가까지 가능합니다. 우측 상단 화살표를 누르면 편집 결과가 새 파일로 저장됩니다.</p>
       <p><b>Q. 편집 단축키가 있나요?</b><br><b>Space</b> 재생/일시정지 · <b>S</b> Split · <b>Del</b> 선택 구간 삭제 · <b>M</b> Mute · <b>←/→</b> 1초 이동(Shift와 함께 5초) · <b>,</b> / <b>.</b> 프레임 단위 이동 · <b>Home/End</b> 처음/끝 · <b>Ctrl+Z</b> 실행취소 · <b>Ctrl+Shift+Z</b>(또는 Ctrl+Y) 다시실행 · <b>Esc</b> 패널 닫기</p>
       <p><b>Q. GIF나 MP3로도 저장할 수 있나요?</b><br>My Videos에서 영상의 <b>GIF</b> 버튼을 누르면 움직이는 GIF(최대 480px·12fps)로, <b>MP3</b> 버튼을 누르면 소리만 MP3 파일로 저장됩니다. GIF는 길이가 길수록 파일이 매우 커지므로, Edit에서 필요한 부분만 잘라 저장한 뒤 변환하는 것을 권장합니다.</p>
-      <p><b>Q. 내보내기(Export)가 오래 걸려요.</b><br>Chrome/Edge·Safari 16.4+에서는 하드웨어 인코딩(WebCodecs)으로 영상 길이와 무관하게 빠르게 처리됩니다. 페이스캠을 켰거나 배속을 바꿨거나 WebCodecs가 없는 브라우저(예: Firefox)에서는 실시간으로 다시 인코딩하는 방식이 사용되어 편집 후 길이만큼 시간이 걸립니다. 진행 중에는 탭을 백그라운드로 보내지 마세요.</p>
+      <p><b>Q. 내보내기(Export)가 오래 걸려요.</b><br>Chrome/Edge·Safari 16.4+에서는 하드웨어 인코딩(WebCodecs)으로 영상 길이와 무관하게 빠르게 처리됩니다. 배속을 바꿨거나 WebCodecs가 없는 브라우저(예: Firefox)에서는 실시간으로 다시 인코딩하는 방식이 사용되어 편집 후 길이만큼 시간이 걸립니다. 진행 중에는 탭을 백그라운드로 보내지 마세요.</p>
       <p><b>Q. 파일은 어디에 저장되나요?</b><br>녹화·편집본은 이 브라우저 안(IndexedDB)에만 저장됩니다. 서버로 업로드되지 않습니다. 브라우저 데이터를 삭제하면 사라지니 중요한 파일은 SAVE 버튼으로 기기에 다운로드해 두세요.</p>
       <p><b>Q. 모바일에서 되나요?</b><br>화면 녹화(getDisplayMedia)는 데스크톱 브라우저 전용입니다. iOS/Android에서는 기기 내장 화면 녹화 기능을 사용해 주세요.</p>
     </div>
