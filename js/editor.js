@@ -1,7 +1,9 @@
 /* Video editor: timeline with trim/split/delete segments, speed, volume,
-   rotate, facecam (webcam PIP), background music, voice-over narration,
-   text/watermark overlays and undo. Export re-encodes the edited result in
-   real time via canvas.captureStream + MediaRecorder.
+   rotate, facecam (pre-recorded webcam PIP clips), background music,
+   voice-over narration, text/watermark overlays and undo. Export prefers
+   the WebCodecs + mediabunny path (faster than realtime, direct mp4); the
+   realtime canvas.captureStream + MediaRecorder path remains as the
+   fallback for browsers without WebCodecs.
    Depends on window.App (app.js) for shared helpers, resolved lazily. */
 (function () {
   'use strict';
@@ -27,8 +29,10 @@
     bgm: null,         // File
     bgmUrl: null,
     bgmEl: null,
-    facecam: { enabled: false, x: 0.05, y: 0.07, w: 0.28, aspect: 4 / 3 },
-    camStream: null,
+    facecam: { x: 0.05, y: 0.07, w: 0.28, aspect: 4 / 3 }, // PIP box layout, shared by all cam clips
+    cams: [],          // [{startOut, blob, url, duration, aspect}] facecam clips on the OUTPUT timeline
+    camRec: null,      // active facecam recording
+    camShown: null,    // cam clip currently loaded in the preview PIP element
     voices: [],        // [{startOut, blob, url, el, duration}] on the OUTPUT timeline
     voiceRec: null,    // active narration recording
     voiceWarned: false, // desync warning shown once per session
@@ -78,12 +82,13 @@
     return out / E.speed;
   }
 
-  /* narration clips are anchored to the output timeline at record time, so
-     cut/speed changes made afterwards shift them — tell the user once */
+  /* narration and facecam clips are anchored to the output timeline at
+     record time, so cut/speed changes made afterwards shift them — tell
+     the user once */
   function warnVoiceDesync() {
-    if (!E.voices.length || E.voiceWarned) return;
+    if ((!E.voices.length && !E.cams.length) || E.voiceWarned) return;
     E.voiceWarned = true;
-    window.App.toast('나레이션이 있는 상태에서 컷·속도를 바꾸면 나레이션 위치가 어긋날 수 있습니다.', 3600);
+    window.App.toast('나레이션·페이스캠이 있는 상태에서 컷·속도를 바꾸면 위치가 어긋날 수 있습니다.', 3600);
   }
 
   function segmentAt(t) {
@@ -114,6 +119,7 @@
       rotate: E.rotate,
       bgmFile: E.bgm,
       voices: E.voices.slice(),
+      cams: E.cams.slice(),
       texts: E.texts.map((t) => ({ ...t })),
       wm: E.wm ? { ...E.wm } : null,
       filters: { ...E.filters },
@@ -155,6 +161,9 @@
     E.voiceVolume = snap.voiceVolume;
     E.rotate = snap.rotate;
     E.voices = snap.voices;
+    E.cams = snap.cams;
+    E.camShown = null;
+    $('facecam-box').classList.add('hidden');
     E.texts = snap.texts;
     E.wm = snap.wm;
     E.filters = { ...snap.filters };
@@ -174,6 +183,7 @@
     renderTimeline();
     renderTexts();
     renderVoiceList();
+    renderCamList();
     layoutWm();
     syncControlsUI();
     updateUndoBtn();
@@ -253,8 +263,8 @@
     setBgm(null);
     renderTexts();
     renderVoiceList();
+    renderCamList();
     updateUndoBtn();
-    $('tool-facecam').classList.remove('active');
     setCanvasSize();
     renderTimeline();
     updateLabels();
@@ -266,16 +276,18 @@
   function cleanup() {
     stopLoop();
     if (E.voiceRec) finishVoiceRec();
+    if (E.camRec) finishCamRec();
     if (E.video) { E.video.pause(); E.video.removeAttribute('src'); E.video.load(); E.video = null; }
     if (E.bgmEl) { E.bgmEl.pause(); E.bgmEl = null; }
     E.voices.forEach((vc) => { if (vc.el) vc.el.pause(); });
     E.voices = [];
+    E.cams = [];
+    E.camShown = null;
     E.texts = [];
     E.wm = null;
     E.bgm = null; E.bgmUrl = null;
     E.undoStack = [];
     E.redoStack = [];
-    disableFacecam();
     E.playing = false;
     E.url = null;
     E._urls.forEach((u) => URL.revokeObjectURL(u));
@@ -287,6 +299,8 @@
     $('edit-stage').classList.remove('crop-mode');
     $('crop-box').classList.add('hidden');
     $('facecam-box').classList.add('hidden');
+    const camEl = $('facecam-video');
+    if (camEl) { camEl.pause(); camEl.srcObject = null; camEl.removeAttribute('src'); camEl.load(); }
     $('wm-box').classList.add('hidden');
     $('text-layer').innerHTML = '';
     closeSheets();
@@ -333,9 +347,11 @@
     if (tmpC.height !== h) tmpC.height = h;
   }
 
-  /* draw the base picture (rotation, filter, crop, aspect padding) */
-  function drawBase(ctx, canvas, v) {
-    const vw = v.videoWidth, vh = v.videoHeight;
+  /* draw the base picture (rotation, filter, crop, aspect padding).
+     src is any CanvasImageSource: the preview <video> or a decoded canvas
+     frame from the WebCodecs export path. */
+  function drawBase(ctx, canvas, src) {
+    const vw = src.videoWidth || src.width, vh = src.videoHeight || src.height;
     if (!vw) return;
     const d = outputDims();
     ensureTmp(d.rotW, d.rotH);
@@ -345,7 +361,7 @@
     tmpCtx.fillRect(0, 0, d.rotW, d.rotH);
     tmpCtx.translate(d.rotW / 2, d.rotH / 2);
     tmpCtx.rotate((E.rotate * Math.PI) / 180);
-    tmpCtx.drawImage(v, -vw / 2, -vh / 2, vw, vh);
+    tmpCtx.drawImage(src, -vw / 2, -vh / 2, vw, vh);
     tmpCtx.restore();
 
     if (E.cropMode) { // crop editing shows the full uncropped frame
@@ -400,6 +416,8 @@
     closeSheets();
     E.cropMode = true;
     E.cropDraft = E.crop ? { ...E.crop } : { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+    E.camShown = null;
+    $('facecam-box').classList.add('hidden'); // don't overlay the crop UI
     setCanvasSize();
     $('edit-stage').classList.add('crop-mode');
     $('crop-box').classList.remove('hidden');
@@ -514,6 +532,7 @@
           });
         }
       }
+      if (!E.cropMode) syncCamPreview(computeOutT(v.currentTime));
       drawFrame(ctx, c, v);
       positionPlayhead();
       E.raf = requestAnimationFrame(tick);
@@ -562,6 +581,7 @@
 
   function pause() {
     if (E.voiceRec) finishVoiceRec();
+    if (E.camRec) finishCamRec();
     if (E.video) E.video.pause();
     if (E.bgmEl) E.bgmEl.pause();
     E.voices.forEach((vc) => { if (vc.el && !vc.el.paused) vc.el.pause(); });
@@ -1037,11 +1057,16 @@
     window.App.toast('회전: ' + E.rotate + '°', 1000);
   }
 
-  /* ---------------- facecam ---------------- */
-  async function toggleFacecam() {
-    if (E.facecam.enabled) { disableFacecam(); return; }
+  /* ---------------- facecam (pre-recorded PIP clips) ----------------
+     The facecam is recorded like a voice-over: playback runs from the
+     current position while the webcam records, and the clip is anchored to
+     the output timeline. Both export paths then composite the clip like a
+     source video — no live webcam is needed at export time. */
+  async function toggleCamRec() {
+    if (E.camRec) { pause(); return; } // pause() finishes the recording
+    let stream;
     try {
-      E.camStream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 } },
         audio: false,
       });
@@ -1049,32 +1074,133 @@
       window.App.toast('카메라를 사용할 수 없습니다: ' + (err && err.name ? err.name : err));
       return;
     }
-    const camV = $('facecam-video');
-    camV.srcObject = E.camStream;
-    const track = E.camStream.getVideoTracks()[0];
+    const track = stream.getVideoTracks()[0];
     const s = track.getSettings();
-    if (s.width && s.height) E.facecam.aspect = s.width / s.height;
-    E.facecam.enabled = true;
+    const aspect = s.width && s.height ? s.width / s.height : 4 / 3;
+    E.facecam.aspect = aspect;
+
+    // live preview in the PIP box while recording
+    const el = $('facecam-video');
+    el.removeAttribute('src');
+    el.srcObject = stream;
+    el.play().catch(() => {});
+    E.camShown = null;
     $('facecam-box').classList.remove('hidden');
-    $('tool-facecam').classList.add('active');
     layoutFacecam();
-    window.App.toast('페이스캠이 켜졌습니다. 드래그로 이동, 모서리로 크기 조절.', 2200);
+
+    const rec = new MediaRecorder(stream);
+    const cr = {
+      rec,
+      stream,
+      chunks: [],
+      aspect,
+      startOut: computeOutT(E.video.currentTime),
+      t0: performance.now(),
+    };
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) cr.chunks.push(e.data); };
+    rec.onstop = () => {
+      const duration = (performance.now() - cr.t0) / 1000;
+      if (!cr.chunks.length || duration < 0.3) return;
+      const blob = new Blob(cr.chunks, { type: rec.mimeType || 'video/webm' });
+      pushUndo();
+      E.cams.push({ startOut: cr.startOut, blob, url: makeUrl(blob), duration, aspect: cr.aspect });
+      renderCamList();
+      window.App.toast('페이스캠 클립이 추가되었습니다. 드래그로 이동, 모서리로 크기 조절.', 2200);
+    };
+    E.camRec = cr;
+    rec.start(250);
+    $('btn-cam-rec').textContent = '■ 녹화 종료';
+    $('tool-facecam').classList.add('active');
+    play();
   }
 
-  function disableFacecam() {
-    if (E.camStream) E.camStream.getTracks().forEach((t) => t.stop());
-    E.camStream = null;
-    E.facecam.enabled = false;
-    const camV = $('facecam-video');
-    if (camV) camV.srcObject = null;
+  /* stop the webcam; the clip is appended in rec.onstop */
+  function finishCamRec() {
+    const cr = E.camRec;
+    E.camRec = null;
+    try { cr.rec.stop(); } catch (e) {}
+    cr.stream.getTracks().forEach((t) => t.stop());
+    const el = $('facecam-video');
+    el.srcObject = null;
+    $('facecam-box').classList.add('hidden');
+    E.camShown = null;
+    $('btn-cam-rec').textContent = '● 녹화 시작';
+  }
+
+  function activeCamAt(outT) {
+    for (const cam of E.cams) {
+      const rel = outT - cam.startOut;
+      if (rel >= 0 && rel < cam.duration - 0.05) return cam;
+    }
+    return null;
+  }
+
+  /* keep the PIP element showing the cam clip covering the current position */
+  function syncCamPreview(outT) {
+    if (E.camRec) return; // the box is showing the live webcam
     const box = $('facecam-box');
-    if (box) box.classList.add('hidden');
-    const btn = $('tool-facecam');
-    if (btn) btn.classList.remove('active');
+    const el = $('facecam-video');
+    const cam = activeCamAt(outT);
+    if (!cam) {
+      if (E.camShown) {
+        E.camShown = null;
+        box.classList.add('hidden');
+        el.pause();
+        el.removeAttribute('src');
+        el.load();
+      }
+      return;
+    }
+    if (E.camShown !== cam) {
+      E.camShown = cam;
+      el.srcObject = null;
+      el.src = cam.url;
+      E.facecam.aspect = cam.aspect || E.facecam.aspect;
+      box.classList.remove('hidden');
+      layoutFacecam();
+    }
+    const rel = outT - cam.startOut;
+    if (E.playing) {
+      if (el.paused) { el.currentTime = rel; el.play().catch(() => {}); }
+    } else {
+      if (!el.paused) el.pause();
+      if (Math.abs(el.currentTime - rel) > 0.2) el.currentTime = rel;
+    }
+  }
+
+  function renderCamList() {
+    const list = $('cam-list');
+    list.innerHTML = '';
+    $('tool-facecam').classList.toggle('active', E.cams.length > 0 || !!E.camRec);
+    if (!E.cams.length) {
+      list.innerHTML = '<span class="bgm-name">아직 녹화된 페이스캠이 없습니다.</span>';
+      return;
+    }
+    E.cams.forEach((cam, i) => {
+      const row = document.createElement('div');
+      row.className = 'voice-item';
+      const label = document.createElement('span');
+      label.textContent = `클립 ${i + 1} · ${fmtT(cam.duration)} @ ${fmtT(cam.startOut)}`;
+      const del = document.createElement('button');
+      del.className = 'voice-del';
+      del.textContent = '✕';
+      del.setAttribute('aria-label', 'Delete facecam clip');
+      del.addEventListener('click', () => {
+        pushUndo();
+        E.cams.splice(i, 1);
+        if (E.camShown === cam) {
+          E.camShown = null;
+          $('facecam-box').classList.add('hidden');
+        }
+        renderCamList();
+      });
+      row.append(label, del);
+      list.append(row);
+    });
   }
 
   function layoutFacecam() {
-    if (!E.facecam.enabled) return;
+    if ($('facecam-box').classList.contains('hidden')) return;
     const cb = contentBox();
     const box = $('facecam-box');
     const w = E.facecam.w * cb.width;
@@ -1154,7 +1280,7 @@
   }
 
   /* ---------------- tool sheets ---------------- */
-  const SHEETS = ['sheet-speed', 'sheet-volume', 'sheet-audio', 'sheet-voice', 'sheet-text', 'sheet-filter', 'sheet-fade', 'sheet-crop', 'sheet-ratio'];
+  const SHEETS = ['sheet-speed', 'sheet-volume', 'sheet-audio', 'sheet-voice', 'sheet-facecam', 'sheet-text', 'sheet-filter', 'sheet-fade', 'sheet-crop', 'sheet-ratio'];
   function toggleSheet(id) {
     exitCropMode();
     SHEETS.forEach((s) => $(s).classList.toggle('hidden', s !== id || !$(id).classList.contains('hidden')));
@@ -1205,6 +1331,279 @@
     updateLabels();
   }
 
+  /* ---------------- fast export (WebCodecs + mediabunny) ----------------
+     Decodes source frames sequentially (mediabunny CanvasSink), composites
+     through the same drawExportFrame pipeline, encodes with the hardware
+     VideoEncoder and muxes to mp4 — as fast as the machine allows instead
+     of realtime. Audio is rendered on the logical timeline with an
+     OfflineAudioContext, so it cannot drift. Facecam clips are pre-recorded
+     in the editor and decoded here like the source. Speed changes stretch
+     the clip audio with pitch preserved (WSOLA), matching the realtime
+     path's pitch-preserving video.playbackRate.
+     Any failure falls back to the realtime MediaRecorder path. */
+  function loadMediabunny() {
+    return window.MBMedia.load();
+  }
+
+  function fastExportEligible() {
+    return typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
+  }
+
+  /* source time for an output-timeline position */
+  function srcTimeAt(outT) {
+    const edited = outT * E.speed;
+    let acc = 0;
+    for (const seg of E.segments) {
+      const len = seg.end - seg.start;
+      if (edited < acc + len) return seg.start + (edited - acc);
+      acc += len;
+    }
+    const last = E.segments[E.segments.length - 1];
+    return last ? Math.max(last.start, last.end - 0.01) : 0;
+  }
+
+  /* WSOLA time-stretch: consumes input at `factor`× per output sample while
+     preserving pitch — the offline equivalent of the realtime path's
+     pitch-preserving video.playbackRate. Windows of the input are re-laid
+     on the output grid, each aligned by cross-correlation against the
+     natural continuation of the previous window, then Hann overlap-added. */
+  function timeStretchPreservePitch(buf, factor, outLength) {
+    const rate = buf.sampleRate;
+    const chs = buf.numberOfChannels;
+    const win = Math.round(rate * 0.05);      // 50ms analysis window
+    const hop = win >> 1;                     // 50% overlap: Hann sums flat
+    const seek = Math.round(rate * 0.012);    // ±12ms alignment search
+    const corrLen = Math.round(rate * 0.01);  // 10ms correlation span
+    const inLen = buf.length;
+    if (inLen < win) return buf;
+
+    const chData = [];
+    for (let c = 0; c < chs; c++) chData.push(buf.getChannelData(c));
+    const mono = new Float32Array(inLen); // correlation guide
+    for (let c = 0; c < chs; c++) {
+      const d = chData[c];
+      for (let i = 0; i < inLen; i++) mono[i] += d[i] / chs;
+    }
+    const hann = new Float32Array(win);
+    for (let i = 0; i < win; i++) hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / win);
+
+    const out = [];
+    for (let c = 0; c < chs; c++) out.push(new Float32Array(outLength));
+    const wsum = new Float32Array(outLength); // normalizes partial edge windows
+
+    let prevIn = -1;
+    for (let op = 0; op < outLength; op += hop) {
+      let ip = Math.round(op * factor);
+      let bestD = 0;
+      const target = prevIn + hop;
+      if (prevIn >= 0 && target + corrLen <= inLen) {
+        let bestScore = -Infinity;
+        for (let d = -seek; d <= seek; d += 4) {
+          const cand = ip + d;
+          if (cand < 0 || cand + win > inLen) continue;
+          let s = 0;
+          for (let i = 0; i < corrLen; i += 4) s += mono[cand + i] * mono[target + i];
+          if (s > bestScore) { bestScore = s; bestD = d; }
+        }
+      }
+      ip = Math.max(0, Math.min(inLen - win, ip + bestD));
+      prevIn = ip;
+      const n = Math.min(win, outLength - op);
+      for (let c = 0; c < chs; c++) {
+        const src = chData[c], dst = out[c];
+        for (let i = 0; i < n; i++) dst[op + i] += src[ip + i] * hann[i];
+      }
+      for (let i = 0; i < n; i++) wsum[op + i] += hann[i];
+    }
+
+    const res = new AudioBuffer({ numberOfChannels: chs, length: outLength, sampleRate: rate });
+    for (let c = 0; c < chs; c++) {
+      const dst = out[c];
+      for (let i = 0; i < outLength; i++) if (wsum[i] > 1e-4) dst[i] /= wsum[i];
+      res.copyToChannel(dst, c);
+    }
+    return res;
+  }
+
+  /* mix clip audio + BGM + narration with mutes and fades on the logical
+     output timeline; returns the rendered AudioBuffer */
+  async function renderOfflineAudio(totalOut) {
+    const rate = 48000;
+    const actx = new OfflineAudioContext(2, Math.max(1, Math.ceil(totalOut * rate)), rate);
+    const master = actx.createGain();
+    master.connect(actx.destination);
+    const g = master.gain;
+    if (E.fadeIn > 0) {
+      g.setValueAtTime(0, 0);
+      g.linearRampToValueAtTime(1, Math.min(E.fadeIn, totalOut));
+    }
+    if (E.fadeOut > 0 && totalOut > E.fadeOut) {
+      g.setValueAtTime(1, totalOut - E.fadeOut);
+      g.linearRampToValueAtTime(0, totalOut);
+    }
+    const decode = async (blob) => {
+      try { return await actx.decodeAudioData(await blob.arrayBuffer()); }
+      catch (err) { return null; } // no audio track / undecodable
+    };
+    const wire = (buf, gain) => {
+      const src = actx.createBufferSource();
+      src.buffer = buf;
+      const gn = actx.createGain();
+      gn.gain.value = gain;
+      src.connect(gn).connect(master);
+      return src;
+    };
+    // clip audio: mixed on the EDITED timeline first (cuts + per-segment
+    // mutes at 1×), then time-stretched to the output length with pitch
+    // preserved — matching the realtime path's playbackRate semantics.
+    // BGM and narration below stay on the output timeline at normal speed.
+    const srcBuf = E.volume > 0 ? await decode(E.item.blob) : null;
+    if (srcBuf) {
+      const editedLen = Math.max(0.001, editedTotal());
+      const cctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(editedLen * rate)), rate);
+      let at = 0;
+      for (const seg of E.segments) {
+        const len = seg.end - seg.start;
+        if (!seg.muted) {
+          const s = cctx.createBufferSource();
+          s.buffer = srcBuf;
+          const gn = cctx.createGain();
+          gn.gain.value = E.volume;
+          s.connect(gn).connect(cctx.destination);
+          s.start(at, seg.start, len);
+        }
+        at += len;
+      }
+      const clipMix = await cctx.startRendering();
+      const stretched = E.speed === 1 ? clipMix
+        : timeStretchPreservePitch(clipMix, E.speed, actx.length);
+      wire(stretched, 1).start(0);
+    }
+    if (E.bgm && E.bgmVolume > 0) {
+      const buf = await decode(E.bgm);
+      if (buf) {
+        const src = wire(buf, E.bgmVolume);
+        src.loop = true;
+        src.start(0);
+        src.stop(totalOut);
+      }
+    }
+    if (E.voiceVolume > 0) {
+      for (const vc of E.voices) {
+        if (vc.startOut >= totalOut) continue;
+        const buf = await decode(vc.blob);
+        if (buf) wire(buf, E.voiceVolume).start(vc.startOut);
+      }
+    }
+    return actx.startRendering();
+  }
+
+  async function renderExportFast(token, onProgress) {
+    const MB = await loadMediabunny();
+
+    const input = new MB.Input({ formats: MB.ALL_FORMATS, source: new MB.BlobSource(E.item.blob) });
+    const track = await input.getPrimaryVideoTrack();
+    if (!track || !(await track.canDecode())) throw new Error('source not decodable via WebCodecs');
+
+    const dims = outputDims();
+    const format = new MB.Mp4OutputFormat();
+    const videoCodec = await MB.getFirstEncodableVideoCodec(
+      format.getSupportedVideoCodecs(), { width: dims.W, height: dims.H });
+    const audioCodec = await MB.getFirstEncodableAudioCodec(
+      format.getSupportedAudioCodecs(), { numberOfChannels: 2, sampleRate: 48000 });
+    if (!videoCodec || !audioCodec) throw new Error('no encodable codec');
+
+    const fps = 30;
+    const totalOut = Math.max(0.001, editedTotal() / E.speed);
+    const totalFrames = Math.max(1, Math.round(totalOut * fps));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = dims.W;
+    canvas.height = dims.H;
+    const ctx = canvas.getContext('2d');
+
+    const output = new MB.Output({ format, target: new MB.BufferTarget() });
+    const videoSource = new MB.CanvasSource(canvas, { codec: videoCodec, bitrate: 8_000_000 });
+    output.addVideoTrack(videoSource);
+    const audioSource = new MB.AudioBufferSource({ codec: audioCodec, bitrate: 192_000 });
+    output.addAudioTrack(audioSource);
+    await output.start();
+
+    try {
+      await audioSource.add(await renderOfflineAudio(totalOut));
+      audioSource.close();
+
+      const srcTimes = [];
+      for (let f = 0; f < totalFrames; f++) srcTimes.push(srcTimeAt(f / fps));
+
+      /* facecam clips: one sequential decoder per clip, advanced in lockstep
+         with the frames its range covers (same predicate as `covers` below,
+         so each iterator yields exactly once per covered frame) */
+      const camPlans = [];
+      const covers = (cam, outT) => {
+        const rel = outT - cam.startOut;
+        return rel >= 0 && rel < cam.duration - 0.05;
+      };
+      for (const cam of E.cams) {
+        const camInput = new MB.Input({ formats: MB.ALL_FORMATS, source: new MB.BlobSource(cam.blob) });
+        const camTrack = await camInput.getPrimaryVideoTrack();
+        if (!camTrack || !(await camTrack.canDecode())) continue; // clip skipped, not fatal
+        const relTimes = [];
+        for (let f = 0; f < totalFrames; f++) {
+          if (covers(cam, f / fps)) relTimes.push(f / fps - cam.startOut);
+        }
+        if (!relTimes.length) continue;
+        const camSink = new MB.CanvasSink(camTrack, { poolSize: 2 });
+        camPlans.push({ cam, iter: camSink.canvasesAtTimestamps(relTimes), last: null });
+      }
+
+      const sink = new MB.CanvasSink(track, { poolSize: 2 });
+      let f = 0;
+      let lastFrame = null;
+      try {
+        for await (const wrapped of sink.canvasesAtTimestamps(srcTimes)) {
+          if (token.cancel) break;
+          if (wrapped) lastFrame = wrapped.canvas;
+          let camFrame = null;
+          const plan = camPlans.find((p) => covers(p.cam, f / fps));
+          if (plan) {
+            const r = await plan.iter.next();
+            if (!r.done && r.value) plan.last = r.value.canvas;
+            camFrame = plan.last;
+          }
+          drawExportFrame(ctx, canvas, lastFrame || { width: 0 }, camFrame, srcTimes[f]);
+          await videoSource.add(f / fps, 1 / fps); // applies encoder backpressure
+          f += 1;
+          if (f % 5 === 0) await new Promise((res) => setTimeout(res)); // yield to the UI
+          onProgress(f / totalFrames);
+        }
+      } finally {
+        for (const p of camPlans) {
+          try { if (p.iter.return) p.iter.return(); } catch (e) { /* decoder already closed */ }
+        }
+      }
+      videoSource.close();
+
+      if (token.cancel) {
+        await output.cancel();
+        return null;
+      }
+      await output.finalize();
+    } catch (err) {
+      try { await output.cancel(); } catch (e) { /* already errored */ }
+      throw err;
+    }
+
+    const buffer = output.target.buffer;
+    if (!buffer || !buffer.byteLength) throw new Error('empty output');
+    return {
+      blob: new Blob([buffer], { type: 'video/mp4' }),
+      mimeType: 'video/mp4',
+      width: dims.W,
+      height: dims.H,
+    };
+  }
+
   /* ---------------- export ---------------- */
   async function doExport() {
     if (E.exporting) return;
@@ -1217,7 +1616,22 @@
 
     let result = null;
     try {
-      result = await renderExport(token, setProgress);
+      if (fastExportEligible()) {
+        try {
+          $('export-title').textContent = '빠른 내보내기 중… (WebCodecs)';
+          result = await renderExportFast(token, setProgress);
+          E.lastExportMethod = 'webcodecs';
+        } catch (err) {
+          // e.g. Firefox without an encoder, or an undecodable source
+          console.warn('fast export unavailable, falling back to realtime:', err);
+          setProgress(0);
+        }
+        $('export-title').textContent = 'Exporting…';
+      }
+      if (!result && !token.cancel) {
+        result = await renderExport(token, setProgress);
+        E.lastExportMethod = 'realtime';
+      }
     } catch (err) {
       window.App.toast('내보내기 실패: ' + (err && err.message ? err.message : err));
     }
@@ -1343,7 +1757,31 @@
       }
     };
 
-    const camV = E.facecam.enabled ? $('facecam-video') : null;
+    // facecam clips: fresh muted elements played in sync on the output timeline
+    const camEls = E.cams.map((cam) => {
+      const el = document.createElement('video');
+      el.muted = true;
+      el.playsInline = true;
+      el.preload = 'auto';
+      el.src = cam.url;
+      return { el, startOut: cam.startOut, duration: cam.duration };
+    });
+    const camState = { current: null };
+    const syncCamsExport = (outT) => {
+      camState.current = null;
+      for (const cam of camEls) {
+        const rel = outT - cam.startOut;
+        if (rel >= 0 && rel < cam.duration - 0.05) {
+          camState.current = cam.el;
+          if (cam.el.paused) {
+            cam.el.currentTime = rel;
+            cam.el.play().catch(() => {});
+          }
+        } else if (!cam.el.paused) {
+          cam.el.pause();
+        }
+      }
+    };
 
     const fps = 30;
     const canvasStream = canvas.captureStream(fps);
@@ -1362,7 +1800,7 @@
     let pumping = true;
     const pump = () => {
       if (!pumping) return;
-      drawExportFrame(ctx, canvas, v, camV);
+      drawExportFrame(ctx, canvas, v, camState.current, v.currentTime);
       requestAnimationFrame(pump);
     };
     requestAnimationFrame(pump);
@@ -1383,6 +1821,7 @@
           if (token.cancel || v.ended || v.currentTime >= seg.end - 0.02) { res(); return; }
           const outT = doneOut + (v.currentTime - seg.start) / E.speed;
           syncVoicesExport(outT);
+          syncCamsExport(outT);
           const f = fadeFactor(outT);
           if (vgainNode) vgainNode.gain.value = (seg.muted ? 0 : E.volume) * f;
           if (bgainNode) bgainNode.gain.value = E.bgmVolume * f;
@@ -1399,6 +1838,7 @@
 
     if (bgmEl) bgmEl.pause();
     voiceEls.forEach((vc) => vc.el.pause());
+    camEls.forEach((cam) => { cam.el.pause(); cam.el.removeAttribute('src'); cam.el.load(); });
     pumping = false;
     rec.stop();
     await stopped;
@@ -1415,13 +1855,16 @@
     };
   }
 
-  function drawExportFrame(ctx, canvas, v, camV) {
+  /* srcTime: the SOURCE-timeline position of this frame (drives the fade) */
+  function drawExportFrame(ctx, canvas, src, camV, srcTime) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    if (v.videoWidth) drawBase(ctx, canvas, v);
-    if (camV && camV.videoWidth) {
+    if (src.videoWidth || src.width) drawBase(ctx, canvas, src);
+    const cw = camV ? (camV.videoWidth || camV.width) : 0;
+    const ch = camV ? (camV.videoHeight || camV.height) : 0;
+    if (cw && ch) {
       const w = E.facecam.w * canvas.width;
-      const h = w / E.facecam.aspect;
+      const h = w / (cw / ch); // the PIP box takes the clip's own aspect
       const x = E.facecam.x * canvas.width;
       const y = E.facecam.y * canvas.height;
       ctx.save();
@@ -1430,8 +1873,8 @@
       ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h);
       ctx.clip();
       // cover-fit the webcam frame into the PIP box
-      const scale = Math.max(w / camV.videoWidth, h / camV.videoHeight);
-      const dw = camV.videoWidth * scale, dh = camV.videoHeight * scale;
+      const scale = Math.max(w / cw, h / ch);
+      const dw = cw * scale, dh = ch * scale;
       ctx.drawImage(camV, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
       ctx.restore();
     }
@@ -1453,7 +1896,7 @@
       ctx.restore();
     }
     // fade covers the whole composited frame, overlays included
-    const f = fadeFactor(computeOutT(v.currentTime));
+    const f = fadeFactor(computeOutT(srcTime));
     if (f < 1) {
       ctx.fillStyle = `rgba(0,0,0,${(1 - f).toFixed(3)})`;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1471,8 +1914,10 @@
     const c = document.createElement('canvas');
     c.width = d.W;
     c.height = d.H;
-    const camV = E.facecam.enabled ? $('facecam-video') : null;
-    drawExportFrame(c.getContext('2d'), c, E.video, camV);
+    // capture whatever the PIP box is currently showing (clip or live preview)
+    const camV = !$('facecam-box').classList.contains('hidden') && $('facecam-video').videoWidth
+      ? $('facecam-video') : null;
+    drawExportFrame(c.getContext('2d'), c, E.video, camV, E.video.currentTime);
     c.toBlob((blob) => {
       if (!blob) { window.App.toast('캡처에 실패했습니다.'); return; }
       const url = URL.createObjectURL(blob);
@@ -1485,6 +1930,52 @@
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       window.App.toast('현재 장면을 PNG로 저장했습니다.', 1800);
     }, 'image/png');
+  }
+
+  /* ---------------- keyboard shortcuts ---------------- */
+  function seekAbs(t) {
+    const v = E.video;
+    if (!v || !E.duration) return;
+    pause();
+    v.currentTime = clamp(t, 0, Math.max(0, E.duration - 0.01));
+    const i = segmentAt(v.currentTime);
+    if (i !== -1 && i !== E.sel) { E.sel = i; renderTimeline(); }
+    positionPlayhead();
+  }
+
+  function seekBy(delta) {
+    if (E.video) seekAbs(E.video.currentTime + delta);
+  }
+
+  function onKeydown(e) {
+    if (!$('view-edit').classList.contains('active') || !E.video || E.exporting) return;
+    if (document.querySelector('.modal:not(.hidden)')) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
+      // typing in a field never triggers shortcuts, but Escape still closes the panel
+      if (e.key === 'Escape') { t.blur(); closeSheets(); }
+      return;
+    }
+
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    if (mod && key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+    if (mod || e.altKey) return;
+
+    switch (e.key) {
+      case ' ': e.preventDefault(); togglePlay(); break;
+      case 's': case 'S': e.preventDefault(); split(); break;
+      case 'm': case 'M': e.preventDefault(); toggleMuteSel(); break;
+      case 'Delete': case 'Backspace': e.preventDefault(); deleteSel(); break;
+      case 'ArrowLeft': e.preventDefault(); seekBy(e.shiftKey ? -5 : -1); break;
+      case 'ArrowRight': e.preventDefault(); seekBy(e.shiftKey ? 5 : 1); break;
+      case ',': e.preventDefault(); seekBy(-1 / 30); break;
+      case '.': e.preventDefault(); seekBy(1 / 30); break;
+      case 'Home': e.preventDefault(); seekAbs(0); break;
+      case 'End': e.preventDefault(); seekAbs(E.duration); break;
+      case 'Escape': e.preventDefault(); closeSheets(); break;
+    }
   }
 
   /* ---------------- wiring ---------------- */
@@ -1503,7 +1994,7 @@
     $('tool-delete').addEventListener('click', deleteSel);
     $('tool-mute').addEventListener('click', toggleMuteSel);
     $('tool-rotate').addEventListener('click', rotate);
-    $('tool-facecam').addEventListener('click', toggleFacecam);
+    $('tool-facecam').addEventListener('click', () => toggleSheet('sheet-facecam'));
     $('tool-speed').addEventListener('click', () => toggleSheet('sheet-speed'));
     $('tool-volume').addEventListener('click', () => toggleSheet('sheet-volume'));
     $('tool-audio').addEventListener('click', () => toggleSheet('sheet-audio'));
@@ -1617,6 +2108,7 @@
     $('btn-bgm-remove').addEventListener('click', () => { pushUndo(); setBgm(null); });
 
     $('btn-voice-rec').addEventListener('click', toggleVoiceRec);
+    $('btn-cam-rec').addEventListener('click', toggleCamRec);
 
     $('btn-text-add').addEventListener('click', addText);
     $('text-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addText(); });
@@ -1649,6 +2141,8 @@
       if (E.exporting) E.exporting.cancel = true;
     });
 
+    document.addEventListener('keydown', onKeydown);
+
     bindTimeline();
     bindFacecam();
     bindWm();
@@ -1666,5 +2160,5 @@
   document.addEventListener('DOMContentLoaded', bind);
   if (document.readyState !== 'loading') bind();
 
-  window.Editor = { open };
+  window.Editor = { open, lastExportMethod: () => E.lastExportMethod || '' };
 })();

@@ -292,16 +292,20 @@
     previewItem = null;
   }
 
-  function downloadItem(item) {
-    const url = URL.createObjectURL(item.blob);
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${item.name}.${extFor(item.mimeType)}`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     toast('다운로드를 시작했습니다.');
+  }
+
+  function downloadItem(item) {
+    downloadBlob(item.blob, `${item.name}.${extFor(item.mimeType)}`);
   }
 
   async function shareItem(item) {
@@ -322,16 +326,28 @@
   }
 
   /* Convert a blob to H.264+AAC mp4 with the progress overlay.
+     mediabunny (WebCodecs, no 32MB engine download) is tried first;
+     ffmpeg.wasm remains the fallback for browsers without WebCodecs.
      Returns {blob, mimeType}; falls back to the original on failure. */
   async function ensureMp4(blob) {
     if (!blob.type || blob.type.includes('mp4')) {
       return { blob, mimeType: blob.type || 'video/mp4' };
     }
-    if (!window.Transcode) return { blob, mimeType: blob.type };
+    if (!window.MBMedia && !window.Transcode) return { blob, mimeType: blob.type };
     $('export-title').textContent = 'MP4로 변환 중…';
     $('overlay-export').classList.remove('hidden');
     setConvertProgress(0);
     try {
+      if (window.MBMedia && MBMedia.canEncodeMp4()) {
+        try {
+          const out = await MBMedia.toMp4(blob, { onProgress: setConvertProgress });
+          return { blob: out, mimeType: 'video/mp4' };
+        } catch (err) {
+          console.warn('mediabunny mp4 conversion failed, falling back to ffmpeg:', err);
+          setConvertProgress(0);
+        }
+      }
+      if (!window.Transcode) throw new Error('WebCodecs 미지원');
       const out = await Transcode.toMp4(blob, {
         onProgress: setConvertProgress,
         onStatus: (s) => { $('export-title').textContent = s; },
@@ -343,6 +359,49 @@
     } finally {
       $('overlay-export').classList.add('hidden');
       $('export-title').textContent = 'Exporting…';
+    }
+  }
+
+  /* ---------------- GIF / MP3 conversion (ffmpeg.wasm, lazy) ---------------- */
+  let convertBusy = false;
+
+  /* Run one Transcode job with the progress overlay; returns the blob or null. */
+  async function runConvert(title, job) {
+    if (!window.Transcode || convertBusy) return null;
+    convertBusy = true;
+    $('export-title').textContent = title;
+    $('overlay-export').classList.remove('hidden');
+    setConvertProgress(0);
+    try {
+      return await job({
+        onProgress: setConvertProgress,
+        onStatus: (s) => { $('export-title').textContent = s; },
+      });
+    } finally {
+      convertBusy = false;
+      $('overlay-export').classList.add('hidden');
+      $('export-title').textContent = 'Exporting…';
+    }
+  }
+
+  async function exportGif(item) {
+    if (item.duration > 30 && !confirm(
+      `영상이 ${Math.round(item.duration)}초입니다. GIF는 길이가 길수록 파일이 매우 커집니다.\n전체를 GIF로 만들까요? (긴 영상은 Edit에서 잘라낸 뒤 변환하는 것을 권장)`
+    )) return;
+    try {
+      const blob = await runConvert('GIF로 변환 중…', (cb) => Transcode.toGif(item.blob, cb));
+      if (blob) downloadBlob(blob, `${item.name}.gif`);
+    } catch (err) {
+      toast('GIF 변환 실패: ' + (err && err.message ? err.message : err));
+    }
+  }
+
+  async function extractMp3(item) {
+    try {
+      const blob = await runConvert('MP3 추출 중…', (cb) => Transcode.toMp3(item.blob, cb));
+      if (blob) downloadBlob(blob, `${item.name}.mp3`);
+    } catch (err) {
+      toast('MP3 추출 실패 — 오디오 트랙이 없는 영상일 수 있습니다.');
     }
   }
 
@@ -455,11 +514,30 @@
 
     const clips = [];
     try {
-      // fast path: same-codec clips concatenate without re-encoding (ffmpeg.wasm)
-      if (window.Transcode) {
-        const metaItems = (await Promise.all(ids.map((id) => VideoDB.get(id)))).filter(Boolean);
-        const types = new Set(metaItems.map((i) => i.mimeType));
-        if (metaItems.length >= 2 && types.size === 1) {
+      // fast path: same-codec clips concatenate without re-encoding —
+      // mediabunny packet copy first (pure JS), then ffmpeg stream copy
+      const metaItems = (await Promise.all(ids.map((id) => VideoDB.get(id)))).filter(Boolean);
+      const types = new Set(metaItems.map((i) => i.mimeType));
+      if (metaItems.length >= 2 && types.size === 1) {
+        const expected = metaItems.reduce((a, i) => a + (i.duration || 0), 0);
+        if (window.MBMedia) {
+          try {
+            $('export-title').textContent = '클립 합치는 중… (재인코딩 없음)';
+            const blob = await MBMedia.concat(
+              metaItems.map((i) => i.blob),
+              metaItems[0].mimeType,
+              { onProgress: setConvertProgress }
+            );
+            window.App._lastMergeMethod = 'mb-copy';
+            await saveMerged(blob, blob.type, metaItems[0].width || 0, metaItems[0].height || 0, expected);
+            return;
+          } catch (err) {
+            console.warn('mediabunny merge failed, trying ffmpeg:', err);
+            $('export-title').textContent = 'Merging…';
+            setConvertProgress(0);
+          }
+        }
+        if (window.Transcode) {
           try {
             const blob = await Transcode.concatCopy(
               metaItems.map((i) => i.blob),
@@ -470,7 +548,6 @@
               }
             );
             window.App._lastMergeMethod = 'copy';
-            const expected = metaItems.reduce((a, i) => a + (i.duration || 0), 0);
             await saveMerged(blob, blob.type, metaItems[0].width || 0, metaItems[0].height || 0, expected);
             return;
           } catch (err) {
@@ -582,6 +659,8 @@
     rename: '<svg viewBox="0 0 24 24"><path d="M5 4h14a1 1 0 0 1 1 1v3h-2V6H6v12h12v-2h2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm7 6h9v4h-9z"/></svg>',
     del: '<svg viewBox="0 0 24 24"><path d="M9 3v1H4v2h16V4h-5V3H9zM6 8v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8H6zm3 2h2v9H9v-9zm4 0h2v9h-2v-9z"/></svg>',
     mp4: '<svg viewBox="0 0 24 24"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v12h14V6H5zm2 8.5v-5h1.5l1 2 1-2H12v5h-1.3v-2.7l-.7 1.4h-1l-.7-1.4v2.7H7zm6.2 0v-5h2a1.6 1.6 0 0 1 0 3.2h-.7v1.8h-1.3zm1.3-3h.6a.5.5 0 0 0 0-1h-.6v1z"/></svg>',
+    gif: '<svg viewBox="0 0 24 24"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v12h14V6H5z"/><text x="12" y="14.6" text-anchor="middle" font-size="6.5" font-weight="700" font-family="inherit">GIF</text></svg>',
+    mp3: '<svg viewBox="0 0 24 24"><path d="M13 4v9.3a3.2 3.2 0 1 0 2 3V8h4V4h-6zM8 6H4v2h4V6zm0 4H4v2h4v-2zm-4 4h3v2H4v-2z"/></svg>',
   };
 
   async function renderLibrary() {
@@ -637,13 +716,19 @@
 
       const actions = document.createElement('div');
       actions.className = 'lib-actions';
-      if (window.Transcode && item.mimeType && !item.mimeType.includes('mp4')) {
+      if ((window.MBMedia || window.Transcode) && item.mimeType && !item.mimeType.includes('mp4')) {
         actions.append(libAction(ICONS.mp4, 'MP4', async () => {
           const conv = await ensureMp4(item.blob);
           if (conv.mimeType.includes('mp4')) {
             downloadItem({ name: item.name, blob: conv.blob, mimeType: 'video/mp4' });
           }
         }));
+      }
+      if (window.Transcode) {
+        actions.append(
+          libAction(ICONS.gif, 'GIF', () => exportGif(item)),
+          libAction(ICONS.mp3, 'MP3', () => extractMp3(item))
+        );
       }
       actions.append(
         libAction(ICONS.save, 'Save', () => downloadItem(item)),
